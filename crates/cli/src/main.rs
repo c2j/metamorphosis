@@ -1,0 +1,509 @@
+use clap::{Parser as ClapParser, Subcommand};
+use metamorphosis_core::extractor::extract_schema_from_dir;
+use metamorphosis_core::types::RewriteAction;
+use metamorphosis_core::{RewriteConfig, RewriteContext, RewriteEngine, RuleRegistry};
+use ogsql_parser::analyzer::schema::SchemaMap;
+use ogsql_parser::formatter::SqlFormatter;
+use ogsql_parser::{ParseOptions, Parser, StatementInfo};
+use std::path::{Path, PathBuf};
+
+mod provenance;
+
+#[derive(ClapParser)]
+#[command(
+    name = "metamorphosis",
+    version,
+    about = "SQL semantic rewriting & data quality probe engine"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Rewrite SQL using Safe (and optionally Conditional) rules
+    Rewrite {
+        file: PathBuf,
+        #[arg(long)]
+        version: Option<String>,
+        #[arg(long, conflicts_with = "sql_dir")]
+        schema: Option<PathBuf>,
+        #[arg(long, conflicts_with = "schema")]
+        sql_dir: Option<PathBuf>,
+        #[arg(long)]
+        rules: Option<String>,
+        #[arg(long)]
+        procedure: Option<PathBuf>,
+        #[arg(long)]
+        from_procedure: bool,
+    },
+    /// Generate suggestions using Manual rules (never rewrites)
+    Suggest {
+        file: PathBuf,
+        #[arg(long)]
+        version: Option<String>,
+        #[arg(long, conflicts_with = "sql_dir")]
+        schema: Option<PathBuf>,
+        #[arg(long, conflicts_with = "schema")]
+        sql_dir: Option<PathBuf>,
+        #[arg(short = 'o', default_value = "text")]
+        output: String,
+        #[arg(long)]
+        procedure: Option<PathBuf>,
+        #[arg(long)]
+        from_procedure: bool,
+    },
+}
+
+fn main() {
+    tracing_subscriber::fmt::init();
+
+    let cli = Cli::parse();
+
+    match cli.command {
+        Command::Rewrite {
+            file,
+            version,
+            schema,
+            sql_dir,
+            rules,
+            procedure,
+            from_procedure,
+        } => run_rewrite(file, version.as_deref(), schema, sql_dir, rules, procedure, from_procedure),
+        Command::Suggest {
+            file,
+            version,
+            schema,
+            sql_dir,
+            output,
+            procedure,
+            from_procedure,
+        } => run_suggest(file, version.as_deref(), schema, sql_dir, &output, procedure, from_procedure),
+    }
+}
+
+fn load_sql(file: &Path) -> String {
+    std::fs::read_to_string(file).unwrap_or_else(|e| {
+        eprintln!("Error: cannot read '{}': {}", file.display(), e);
+        std::process::exit(1);
+    })
+}
+
+fn load_schema(schema_path: Option<PathBuf>, sql_dir: Option<PathBuf>) -> Option<SchemaMap> {
+    match (schema_path, sql_dir) {
+        (Some(p), None) => {
+            let content = std::fs::read_to_string(&p).unwrap_or_else(|e| {
+                eprintln!("Error: cannot read schema '{}': {}", p.display(), e);
+                std::process::exit(1);
+            });
+            Some(serde_json::from_str(&content).unwrap_or_else(|e| {
+                eprintln!("Error: invalid schema JSON '{}': {}", p.display(), e);
+                std::process::exit(1);
+            }))
+        }
+        (None, Some(dir)) => match extract_schema_from_dir(&dir) {
+            Ok(schema) => {
+                eprintln!(
+                    "Extracted schema from {} table(s) in '{}'",
+                    schema.len(),
+                    dir.display()
+                );
+                Some(schema)
+            }
+            Err(e) => {
+                eprintln!("Error: schema extraction failed: {e}");
+                std::process::exit(1);
+            }
+        },
+        (None, None) => None,
+        (Some(_), Some(_)) => {
+            eprintln!("Error: --schema and --sql-dir are mutually exclusive");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn build_engine(rules_opt: Option<String>) -> RewriteEngine {
+    let all_rules = metamorphosis_rules::builtin_rules();
+
+    let registry = if let Some(rules_str) = rules_opt {
+        let enabled: std::collections::HashSet<String> =
+            rules_str.split(',').map(|s| s.trim().to_string()).collect();
+        let filtered: Vec<Box<dyn metamorphosis_core::RewriteRule>> = all_rules
+            .into_iter()
+            .filter(|r| enabled.contains(r.id()))
+            .collect();
+        RuleRegistry::new(filtered)
+    } else {
+        RuleRegistry::new(all_rules)
+    };
+
+    RewriteEngine::new(registry)
+}
+
+fn load_procedure_variables(procedure: Option<PathBuf>) -> Option<std::collections::HashSet<String>> {
+    let path = procedure?;
+    let analysis = provenance::analyze_procedure_file(&path);
+    if analysis.variables.is_empty() {
+        return None;
+    }
+    Some(analysis.variables)
+}
+
+fn run_rewrite(
+    file: PathBuf,
+    version: Option<&str>,
+    schema_path: Option<PathBuf>,
+    sql_dir: Option<PathBuf>,
+    rules: Option<String>,
+    procedure: Option<PathBuf>,
+    from_procedure: bool,
+) {
+    let schema = load_schema(schema_path, sql_dir.clone());
+    let engine = build_engine(rules);
+
+    if from_procedure {
+        run_rewrite_from_procedure(&file, version, schema.as_ref(), &engine);
+    } else {
+        run_rewrite_sql_file(&file, version, schema.as_ref(), &engine, procedure, sql_dir.as_ref());
+    }
+}
+
+fn run_rewrite_from_procedure(
+    file: &Path,
+    version: Option<&str>,
+    schema: Option<&SchemaMap>,
+    engine: &RewriteEngine,
+) {
+    let analysis = provenance::analyze_procedure_file(file);
+    let config = RewriteConfig::default();
+    let known_variables = if analysis.variables.is_empty() {
+        None
+    } else {
+        Some(analysis.variables)
+    };
+    let ctx = RewriteContext {
+        version,
+        schema,
+        config: &config,
+        source_file: Some(file.to_str().unwrap_or("unknown")),
+        known_variables: known_variables.as_ref(),
+    };
+
+    let items = &analysis.extracted_sql;
+    if items.is_empty() {
+        println!("-- No SQL statements found in procedure");
+        return;
+    }
+
+    let mut any_rewritten = false;
+    for (i, (stmt, prov)) in items.iter().enumerate() {
+        let result = engine.rewrite(&ctx, vec![stmt.clone()]);
+        let header = provenance::format_provenance_header(
+            i + 1,
+            provenance::stmt_type_label(stmt),
+            Some(&prov.source_file),
+            prov.procedure_name.as_deref(),
+            prov.start_line,
+            prov.end_line,
+            items.len(),
+        );
+
+        if result.changed {
+            any_rewritten = true;
+            println!("{}", header);
+            for rewritten in &result.statements {
+                println!(
+                    "{};",
+                    SqlFormatter::new()
+                        .pretty_print(true)
+                        .format_statement(rewritten)
+                );
+            }
+        }
+    }
+
+    if !any_rewritten {
+        println!("-- No rewrites applied");
+        for (i, (stmt, prov)) in items.iter().enumerate() {
+            let header = provenance::format_provenance_header(
+                i + 1,
+                provenance::stmt_type_label(stmt),
+                Some(&prov.source_file),
+                prov.procedure_name.as_deref(),
+                prov.start_line,
+                prov.end_line,
+                items.len(),
+            );
+            println!("{} no matching rule", header);
+        }
+    }
+}
+
+fn run_rewrite_sql_file(
+    file: &Path,
+    version: Option<&str>,
+    schema: Option<&SchemaMap>,
+    engine: &RewriteEngine,
+    procedure: Option<PathBuf>,
+    sql_dir: Option<&PathBuf>,
+) {
+    let sql = load_sql(file);
+    let known_variables = load_procedure_variables(procedure);
+
+    let prov_index = sql_dir
+        .map(|d| provenance::ProvenanceIndex::build_from_dir(d))
+        .unwrap_or_else(provenance::ProvenanceIndex::empty);
+
+    let config = RewriteConfig::default();
+    let ctx = RewriteContext {
+        version,
+        schema,
+        config: &config,
+        source_file: Some(file.to_str().unwrap_or("unknown")),
+        known_variables: known_variables.as_ref(),
+    };
+
+    let parse_output = Parser::parse_sql_with_options(
+        &sql,
+        ParseOptions {
+            preserve_comments: false,
+            mybatis_params: false,
+        },
+    );
+
+    if !parse_output.errors.is_empty() {
+        for err in &parse_output.errors {
+            eprintln!("Parse warning: {:?}", err);
+        }
+    }
+
+    let stmt_infos = parse_output.statements;
+    if stmt_infos.is_empty() {
+        println!("-- No statements to process");
+        return;
+    }
+
+    let source_file_str = file.to_str().unwrap_or("unknown");
+    let mut any_rewritten = false;
+    for (i, si) in stmt_infos.iter().enumerate() {
+        let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
+        let header = if prov_index.has_entries() {
+            provenance::format_stmtinfo_header_with_lookup(&prov_index, i + 1, si, Some(source_file_str), stmt_infos.len())
+        } else {
+            provenance::format_stmtinfo_header(i + 1, si, Some(source_file_str), stmt_infos.len())
+        };
+
+        if result.changed {
+            any_rewritten = true;
+            println!("{}", header);
+            for rewritten in &result.statements {
+                println!(
+                    "{};",
+                    SqlFormatter::new()
+                        .pretty_print(true)
+                        .format_statement(rewritten)
+                );
+            }
+        }
+    }
+
+    if !any_rewritten {
+        println!("-- No rewrites applied");
+        if stmt_infos.len() > 1 {
+            for (i, si) in stmt_infos.iter().enumerate() {
+                let header = if prov_index.has_entries() {
+                    provenance::format_stmtinfo_header_with_lookup(&prov_index, i + 1, si, Some(source_file_str), stmt_infos.len())
+                } else {
+                    provenance::format_stmtinfo_header(i + 1, si, Some(source_file_str), stmt_infos.len())
+                };
+                println!("{} no matching rule", header);
+            }
+        }
+    }
+}
+
+fn run_suggest(
+    file: PathBuf,
+    version: Option<&str>,
+    schema_path: Option<PathBuf>,
+    sql_dir: Option<PathBuf>,
+    output: &str,
+    procedure: Option<PathBuf>,
+    from_procedure: bool,
+) {
+    let schema = load_schema(schema_path, sql_dir.clone());
+    let engine = build_engine(None);
+
+    if from_procedure {
+        run_suggest_from_procedure(&file, version, schema.as_ref(), &engine, output);
+    } else {
+        run_suggest_sql_file(&file, version, schema.as_ref(), &engine, output, procedure, sql_dir.as_ref());
+    }
+}
+
+fn run_suggest_from_procedure(
+    file: &Path,
+    version: Option<&str>,
+    schema: Option<&SchemaMap>,
+    engine: &RewriteEngine,
+    output: &str,
+) {
+    let analysis = provenance::analyze_procedure_file(file);
+    let config = RewriteConfig::default();
+    let known_variables = if analysis.variables.is_empty() {
+        None
+    } else {
+        Some(analysis.variables)
+    };
+    let ctx = RewriteContext {
+        version,
+        schema,
+        config: &config,
+        source_file: Some(file.to_str().unwrap_or("unknown")),
+        known_variables: known_variables.as_ref(),
+    };
+
+    let items = &analysis.extracted_sql;
+    if items.is_empty() {
+        println!("No SQL statements found in procedure.");
+        return;
+    }
+
+    match output {
+        "json" => {
+            let stmts: Vec<_> = items.iter().map(|(s, _)| s.clone()).collect();
+            let result = engine.rewrite(&ctx, stmts);
+            let suggestions_json = serde_json::to_string_pretty(&result.suggestions)
+                .expect("Failed to serialize suggestions");
+            println!("{}", suggestions_json);
+        }
+        _ => {
+            for (i, (stmt, prov)) in items.iter().enumerate() {
+                let result = engine.rewrite(&ctx, vec![stmt.clone()]);
+                let header = provenance::format_provenance_header(
+                    i + 1,
+                    provenance::stmt_type_label(stmt),
+                    Some(&prov.source_file),
+                    prov.procedure_name.as_deref(),
+                    prov.start_line,
+                    prov.end_line,
+                    items.len(),
+                );
+                println!("{}", header);
+
+                if !result.suggestions.is_empty() {
+                    for s in &result.suggestions {
+                        println!("Rule: {} — {}", s.rule_id, s.rule_description);
+                        if let RewriteAction::Generate {
+                            ref stmt,
+                            ref purpose,
+                            ref confidence,
+                        } = s.action
+                        {
+                            println!("Purpose: {}", purpose);
+                            println!("Confidence: {:?}", confidence);
+                            println!("Probe SQL:");
+                            println!(
+                                "{};",
+                                SqlFormatter::new()
+                                    .pretty_print(true)
+                                    .format_statement(stmt)
+                            );
+                        }
+                    }
+                } else {
+                    println!("Result: no matching rule");
+                }
+            }
+        }
+    }
+}
+
+fn run_suggest_sql_file(
+    file: &Path,
+    version: Option<&str>,
+    schema: Option<&SchemaMap>,
+    engine: &RewriteEngine,
+    output: &str,
+    procedure: Option<PathBuf>,
+    sql_dir: Option<&PathBuf>,
+) {
+    let sql = load_sql(file);
+    let known_variables = load_procedure_variables(procedure);
+
+    let prov_index = sql_dir
+        .map(|d| provenance::ProvenanceIndex::build_from_dir(d))
+        .unwrap_or_else(provenance::ProvenanceIndex::empty);
+
+    let config = RewriteConfig::default();
+    let ctx = RewriteContext {
+        version,
+        schema,
+        config: &config,
+        source_file: Some(file.to_str().unwrap_or("unknown")),
+        known_variables: known_variables.as_ref(),
+    };
+
+    let parse_output = Parser::parse_sql_with_options(&sql, ParseOptions::default());
+
+    if !parse_output.errors.is_empty() {
+        for err in &parse_output.errors {
+            eprintln!("Parse warning: {:?}", err);
+        }
+    }
+
+    let stmt_infos: Vec<StatementInfo> = parse_output.statements;
+    if stmt_infos.is_empty() {
+        println!("No statements to process.");
+        return;
+    }
+
+    let source_file_str = file.to_str().unwrap_or("unknown");
+
+    match output {
+        "json" => {
+            let stmts: Vec<_> = stmt_infos.iter().map(|si| si.statement.clone()).collect();
+            let result = engine.rewrite(&ctx, stmts);
+            let suggestions_json = serde_json::to_string_pretty(&result.suggestions)
+                .expect("Failed to serialize suggestions");
+            println!("{}", suggestions_json);
+        }
+        _ => {
+            for (i, si) in stmt_infos.iter().enumerate() {
+                let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
+                let header = if prov_index.has_entries() {
+                    provenance::format_stmtinfo_header_with_lookup(&prov_index, i + 1, si, Some(source_file_str), stmt_infos.len())
+                } else {
+                    provenance::format_stmtinfo_header(i + 1, si, Some(source_file_str), stmt_infos.len())
+                };
+                println!("{}", header);
+
+                if !result.suggestions.is_empty() {
+                    for s in &result.suggestions {
+                        println!("Rule: {} — {}", s.rule_id, s.rule_description);
+                        if let RewriteAction::Generate {
+                            ref stmt,
+                            ref purpose,
+                            ref confidence,
+                        } = s.action
+                        {
+                            println!("Purpose: {}", purpose);
+                            println!("Confidence: {:?}", confidence);
+                            println!("Probe SQL:");
+                            println!(
+                                "{};",
+                                SqlFormatter::new()
+                                    .pretty_print(true)
+                                    .format_statement(stmt)
+                            );
+                        }
+                    }
+                } else {
+                    println!("Result: no matching rule");
+                }
+            }
+        }
+    }
+}

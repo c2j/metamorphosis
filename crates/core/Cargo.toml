@@ -1,0 +1,15 @@
+[package]
+name = "metamorphosis-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ogsql-parser = { git = "https://github.com/c2j/ogsql-parser" }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,11 @@
+[package]
+name = "metamorphosis-rules"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+metamorphosis-core = { path = "../core" }
+ogsql-parser = { git = "https://github.com/c2j/ogsql-parser" }
+tracing = "0.1"

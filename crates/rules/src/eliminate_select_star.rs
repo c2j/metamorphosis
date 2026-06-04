@@ -1,0 +1,101 @@
+use metamorphosis_core::types::{RewriteAction, RuleCategory, SafetyLevel};
+use metamorphosis_core::{RewriteContext, RewriteRule};
+use ogsql_parser::ast::{SelectTarget, Spanned};
+use ogsql_parser::{Expr, ObjectName, Statement, TableRef};
+use tracing::debug;
+
+/// Rule: replace `SELECT *` (or `SELECT t.*`) with explicit column names
+/// from the schema map.
+///
+/// Safety: Safe (semantically equivalent when schema is accurate).
+#[derive(Debug)]
+pub struct EliminateSelectStar;
+
+impl RewriteRule for EliminateSelectStar {
+    fn id(&self) -> &'static str {
+        "eliminate-select-star"
+    }
+
+    fn description(&self) -> &'static str {
+        "Replace SELECT * with explicit column names using schema metadata"
+    }
+
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Semantic
+    }
+
+    fn safety_level(&self) -> SafetyLevel {
+        SafetyLevel::Safe
+    }
+
+    fn matches(&self, ctx: &RewriteContext, stmt: &Statement) -> bool {
+        if ctx.schema.is_none() {
+            return false;
+        }
+
+        match stmt {
+            Statement::Select(spanned) => has_wildcard_target(&spanned.targets),
+            _ => false,
+        }
+    }
+
+    fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Option<RewriteAction> {
+        let schema = ctx.schema?;
+        let spanned = match stmt {
+            Statement::Select(s) => s,
+            _ => return None,
+        };
+
+        let select = &spanned.node;
+        if !has_wildcard_target(&select.targets) {
+            return None;
+        }
+
+        let (table_name, _alias) = resolve_base_table(&select.from)?;
+        let table_key = table_name.join(".").to_lowercase();
+        let columns = schema.get(&table_key)?;
+
+        debug!(
+            table = %table_key,
+            column_count = columns.len(),
+            "Expanding SELECT *"
+        );
+
+        let mut new_targets: Vec<SelectTarget> = Vec::with_capacity(select.targets.len());
+        for target in &select.targets {
+            match target {
+                SelectTarget::Star(prefix) => {
+                    for col_name in columns.keys() {
+                        let column_ref = if let Some(p) = prefix {
+                            Expr::ColumnRef(ObjectName::from(vec![p.clone(), col_name.clone()]))
+                        } else {
+                            Expr::ColumnRef(ObjectName::from(vec![col_name.clone()]))
+                        };
+                        new_targets.push(SelectTarget::Expr(column_ref, None));
+                    }
+                }
+                other => new_targets.push(other.clone()),
+            }
+        }
+
+        let mut new_select = select.clone();
+        new_select.targets = new_targets;
+
+        Some(RewriteAction::Replace(Box::new(Statement::Select(
+            Spanned::without_span(new_select),
+        ))))
+    }
+}
+
+/// Check if any target is a wildcard (including qualified wildcards like `t.*`).
+fn has_wildcard_target(targets: &[SelectTarget]) -> bool {
+    targets.iter().any(|t| matches!(t, SelectTarget::Star(_)))
+}
+
+/// Resolve the first base table from the FROM clause, skipping subqueries/joins.
+fn resolve_base_table(from: &[TableRef]) -> Option<(&ObjectName, &Option<String>)> {
+    from.iter().find_map(|tr| match tr {
+        TableRef::Table { name, alias, .. } => Some((name, alias)),
+        _ => None,
+    })
+}
