@@ -9,14 +9,18 @@
 //! 1. [`schema`] — Extract rich schema (PK, FK, NOT NULL, CHECK) from DDL
 //! 2. [`ir`] — QED intermediate representation types (Rust → JSON)
 //! 3. [`translator`] — ogsql-parser AST → QED Relation translator
-//! 4. `prover` — QED prover binary harness *(future)*
-//! 5. `verify` — End-to-end verification pipeline *(future)*
+//! 4. [`prover`] — QED prover binary harness
+//! 5. [`verify`] — End-to-end verification pipeline
 
 pub mod ir;
+pub mod prover;
 pub mod schema;
 pub mod translator;
+pub mod verify;
 
 pub use ir::{QedAggArg, QedAggCall, QedExpr, QedInput, QedRelation, QedSchema, QedValue};
+
+pub use prover::{ProofResult, ProverConfig, ProverError};
 
 pub use schema::{
     CheckConstraint, ColumnInfo, ForeignKeyInfo, ReferentialAction, RichSchema, TableConstraints,
@@ -24,3 +28,5 @@ pub use schema::{
 };
 
 pub use translator::{AstTranslator, TranslateError};
+
+pub use verify::{VerificationResult, VerifyError};
