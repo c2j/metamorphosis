@@ -280,6 +280,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "metamorphosis-qed"
+version = "0.1.0"
+dependencies = [
+ "metamorphosis-core",
+ "metamorphosis-rules",
+ "ogsql-parser",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "metamorphosis-rules"
 version = "0.1.0"
 dependencies = [
