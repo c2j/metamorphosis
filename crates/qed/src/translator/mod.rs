@@ -215,8 +215,14 @@ impl<'a> AstTranslator<'a> {
                 SetOperation::Union { all: false, .. } => QedRelation::Distinct {
                     input: Box::new(QedRelation::Union { left: Box::new(rel), right: Box::new(right) }),
                 },
-                SetOperation::Intersect { .. } => QedRelation::Intersect { left: Box::new(rel), right: Box::new(right) },
-                SetOperation::Except { .. } => QedRelation::Except { left: Box::new(rel), right: Box::new(right) },
+                SetOperation::Intersect { all: true, .. } => QedRelation::Intersect { left: Box::new(rel), right: Box::new(right) },
+                SetOperation::Intersect { all: false, .. } => QedRelation::Distinct {
+                    input: Box::new(QedRelation::Intersect { left: Box::new(rel), right: Box::new(right) }),
+                },
+                SetOperation::Except { all: true, .. } => QedRelation::Except { left: Box::new(rel), right: Box::new(right) },
+                SetOperation::Except { all: false, .. } => QedRelation::Distinct {
+                    input: Box::new(QedRelation::Except { left: Box::new(rel), right: Box::new(right) }),
+                },
             };
         }
         Ok(rel)
@@ -351,6 +357,10 @@ impl<'a> AstTranslator<'a> {
         let aggs = self.extract_aggregates(targets, scope)?;
         let agg_rel = QedRelation::Aggregate { keys, aggs, input: Box::new(input) };
         if let Some(ref h) = having {
+            // Phase A limitation: HAVING expressions use pre-aggregation scope.
+            // GROUP BY key references work (same index), but aggregate function
+            // references in HAVING (e.g., HAVING COUNT(*) > 5) will error with
+            // ColumnNotFound. Full post-aggregation scope support requires Phase B.
             Ok(QedRelation::Filter { condition: self.translate_expr(h, scope)?, input: Box::new(agg_rel) })
         } else { Ok(agg_rel) }
     }
@@ -435,16 +445,21 @@ impl<'a> AstTranslator<'a> {
             }
             Expr::InList { expr, list, negated } => {
                 let inner = self.translate_expr(expr, scope)?;
-                let mut chain = list.iter().map(|item| {
+                let items: Vec<QedExpr> = list.iter().map(|item| {
                     Ok(QedExpr::BinOp { op: "eq".to_string(), left: Box::new(inner.clone()), right: Box::new(self.translate_expr(item, scope)?) })
-                });
-                let first = chain.next().transpose()?;
-                let result = chain.fold(first, |acc, next| Some(QedExpr::BinOp { op: "or".to_string(), left: Box::new(acc?), right: Box::new(next.ok()?) }));
-                let result = result.ok_or_else(|| TranslateError::UnsupportedExpr("empty IN list".to_string()))?;
+                }).collect::<Result<Vec<_>, TranslateError>>()?;
+                if items.is_empty() {
+                    return Err(TranslateError::UnsupportedExpr("empty IN list".to_string()));
+                }
+                let result = items.into_iter().reduce(|acc, next| QedExpr::BinOp { op: "or".to_string(), left: Box::new(acc), right: Box::new(next) })
+                    .expect("non-empty items reduce to one");
                 if *negated { Ok(QedExpr::UnOp { op: "not".to_string(), expr: Box::new(result) }) } else { Ok(result) }
             }
             Expr::Exists(subquery) => Ok(QedExpr::Quantified { cmp: "eq".to_string(), quantifier: "some".to_string(), subquery: Box::new(self.translate_select(subquery)?) }),
-            Expr::Subquery(subquery) => { let _ = self.translate_select(subquery)?; Ok(QedExpr::Function { name: "ScalarSubquery".to_string(), args: vec![] }) }
+            Expr::Subquery(subquery) => {
+                let _ = self.translate_select(subquery)?;
+                Ok(QedExpr::Function { name: "ScalarSubquery".to_string(), args: vec![QedExpr::Literal { value: QedValue::String { value: "subquery".to_string() } }] })
+            }
             Expr::Parameter(n) => Ok(QedExpr::Function { name: "Param".to_string(), args: vec![QedExpr::Literal { value: QedValue::Integer { value: i64::from(*n) } }] }),
             Expr::MyBatisParam(name) => Ok(QedExpr::Function { name: "Param".to_string(), args: vec![QedExpr::Literal { value: QedValue::String { value: name.clone() } }] }),
             Expr::Case { operand, whens, else_expr } => {
@@ -468,7 +483,7 @@ impl<'a> AstTranslator<'a> {
             Literal::Null => QedExpr::Null,
             _ => QedExpr::Literal { value: match lit {
                 Literal::Integer(n) => QedValue::Integer { value: *n },
-                Literal::Float(s) => QedValue::Float { value: s.parse().unwrap_or(0.0) },
+                Literal::Float(s) => QedValue::Float { value: s.parse::<f64>().unwrap_or_else(|e| { tracing::warn!("invalid float literal '{s}': {e}"); 0.0 }) },
                 Literal::String(s) => QedValue::String { value: s.clone() },
                 Literal::Boolean(b) => QedValue::Boolean { value: *b },
                 other => QedValue::String { value: format!("{other:?}") },

@@ -150,14 +150,20 @@ fn test_union_all() {
 fn test_intersect() {
     let schema = users_orders_schema();
     let rel = translate_sql("SELECT id FROM users INTERSECT SELECT id FROM admins", &schema).unwrap();
-    assert!(matches!(rel, QedRelation::Intersect { .. }));
+    match &rel {
+        QedRelation::Distinct { input } => assert!(matches!(&**input, QedRelation::Intersect { .. }), "expected Distinct(Intersect), got {rel:?}"),
+        _ => panic!("expected Distinct wrapping Intersect, got {rel:?}"),
+    }
 }
 
 #[test]
 fn test_except() {
     let schema = users_orders_schema();
     let rel = translate_sql("SELECT id FROM users EXCEPT SELECT id FROM admins", &schema).unwrap();
-    assert!(matches!(rel, QedRelation::Except { .. }));
+    match &rel {
+        QedRelation::Distinct { input } => assert!(matches!(&**input, QedRelation::Except { .. }), "expected Distinct(Except), got {rel:?}"),
+        _ => panic!("expected Distinct wrapping Except, got {rel:?}"),
+    }
 }
 
 #[test]

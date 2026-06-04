@@ -96,23 +96,43 @@ pub fn run_prover(input: &QedInput, config: &ProverConfig) -> Result<ProofResult
     let binary = config.binary_path.clone();
     let input_path_clone = input_path.clone();
 
+    // Child handle shared with timeout path for process killing.
+    let child_arc: std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let child_for_thread = child_arc.clone();
+
     let handle = std::thread::spawn(move || {
-        let result = std::process::Command::new(&binary)
+        match std::process::Command::new(&binary)
             .arg(&input_path_clone)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .output();
-        let _ = tx.send(result);
+            .spawn()
+        {
+            Ok(child) => {
+                *child_for_thread.lock().unwrap() = Some(child);
+                // Take back ownership — wait_with_output consumes self
+                let taken = child_for_thread.lock().unwrap().take();
+                match taken {
+                    Some(c) => { let _ = tx.send(c.wait_with_output().map_err(|e| e.to_string())); }
+                    None => { let _ = tx.send(Err("child handle lost".to_string())); }
+                }
+            }
+            Err(e) => { let _ = tx.send(Err(e.to_string())); }
+        }
     });
 
     match rx.recv_timeout(Duration::from_secs(config.timeout_secs)) {
         Ok(Ok(output)) => parse_prover_output(&output),
-        Ok(Err(e)) => Err(ProverError::Process(e.to_string())),
+        Ok(Err(e)) => Err(ProverError::Process(e)),
         Err(_) => {
+            if let Ok(mut guard) = child_arc.lock() {
+                if let Some(ref mut child) = *guard {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
             let _ = handle.join();
-            Ok(ProofResult::Timeout {
-                seconds: config.timeout_secs,
-            })
+            Ok(ProofResult::Timeout { seconds: config.timeout_secs })
         }
     }
 }
