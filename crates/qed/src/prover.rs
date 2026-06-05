@@ -95,6 +95,18 @@ pub fn run_prover(
     config: &ProverConfig,
     schema_name_map: Option<&HashMap<String, String>>,
 ) -> Result<ProofResult, ProverError> {
+    // Primary: embedded Z3 solver (no external binary required)
+    match crate::z3_solver::solve_equivalence(input) {
+        Ok(result) => {
+            tracing::debug!("Z3 solver returned: {result:?}");
+            return Ok(result);
+        }
+        Err(e) => {
+            tracing::warn!("Z3 solver failed: {e}; falling back to binary prover");
+        }
+    }
+
+    // Fallback: external qed-prover binary
     let name_map = schema_name_map
         .cloned()
         .unwrap_or_default();
