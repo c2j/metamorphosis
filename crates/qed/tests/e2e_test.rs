@@ -1,8 +1,7 @@
 //! End-to-end verification tests.
 //!
-//! Full E2E tests require `qed-prover` binary on PATH. Tests that need
-//! the binary are marked with `#[ignore]` and can be run with
-//! `cargo test -p metamorphosis-qed --test e2e_test -- --ignored`.
+//! Full E2E tests use the embedded Z3 SMT solver for equivalence proofs.
+//! No external binaries are required.
 
 use metamorphosis_core::context::{RewriteConfig, RewriteContext};
 use metamorphosis_core::registry::RewriteRule;
@@ -91,7 +90,6 @@ fn test_build_qed_schemas_structure() {
 }
 
 #[test]
-#[ignore = "requires qed-prover binary on PATH"]
 fn test_verify_identity_rewrite_with_prover() {
     let ddl = parse_ddl(make_test_schema_ddl());
     let schema = extract_rich_schema(&ddl);

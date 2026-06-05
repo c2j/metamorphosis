@@ -1,17 +1,11 @@
-//! Real qed-prover E2E equivalence proof tests.
+//! E2E equivalence proof tests using the embedded Z3 SMT solver.
 //!
-//! These tests invoke the actual `qed-prover` binary (built from
-//! <https://github.com/qed-solver/prover>) to prove SQL query equivalence.
+//! These tests verify that the Z3-based equivalence prover correctly handles
+//! various SQL query equivalence patterns (identity, SELECT *, tautological
+//! WHERE, JOIN patterns from SubqueryToJoin rewrites, etc.).
 //!
-//! **Prerequisites** (all must be on PATH):
-//! - `qed-prover` binary (built with `cargo +nightly build --release`)
-//! - `z3` SMT solver
-//! - `cvc5` SMT solver
-//!
-//! Run with:
-//! ```sh
-//! cargo test -p metamorphosis-qed --test prover_e2e_test -- --ignored
-//! ```
+//! No external binaries are required — Z3 is linked at compile time via
+//! the `z3` crate.
 
 use metamorphosis_qed::prover::ProverConfig;
 use metamorphosis_qed::schema::extract_rich_schema;
@@ -44,7 +38,6 @@ fn prover_config() -> ProverConfig {
 }
 
 #[test]
-#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
 fn test_identity_query_is_provable() {
     let ddl = parse_ddl(test_schema_ddl());
     let schema = extract_rich_schema(&ddl);
@@ -68,7 +61,6 @@ fn test_identity_query_is_provable() {
 }
 
 #[test]
-#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
 fn test_select_star_expansion_is_provable() {
     let ddl = parse_ddl(test_schema_ddl());
     let schema = extract_rich_schema(&ddl);
@@ -98,7 +90,6 @@ fn test_select_star_expansion_is_provable() {
 }
 
 #[test]
-#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
 fn test_different_columns_is_not_provable() {
     let ddl = parse_ddl(test_schema_ddl());
     let schema = extract_rich_schema(&ddl);
@@ -131,7 +122,6 @@ fn test_different_columns_is_not_provable() {
 }
 
 #[test]
-#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
 fn test_tautological_where_is_provable() {
     let ddl = parse_ddl(test_schema_ddl());
     let schema = extract_rich_schema(&ddl);
@@ -161,7 +151,6 @@ fn test_tautological_where_is_provable() {
 }
 
 #[test]
-#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
 fn test_qualified_schema_names() {
     let ddl = parse_ddl(test_schema_ddl());
     let schema = extract_rich_schema(&ddl);
@@ -195,7 +184,6 @@ fn test_qualified_schema_names() {
 }
 
 #[test]
-#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
 fn test_exists_to_join_is_provable() {
     // Non-correlated pattern: EXISTS with independent subquery condition
     // (translator limitation: correlated subqueries not yet supported)
@@ -223,7 +211,6 @@ fn test_exists_to_join_is_provable() {
 }
 
 #[test]
-#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
 fn test_in_subquery_to_join_is_provable() {
     let ddl = parse_ddl(
         "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL); CREATE TABLE active_users (id INTEGER PRIMARY KEY)",
@@ -249,7 +236,6 @@ fn test_in_subquery_to_join_is_provable() {
 }
 
 #[test]
-#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
 fn test_not_exists_to_join_is_provable() {
     let ddl = parse_ddl(
         "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL); CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL)",
@@ -275,7 +261,6 @@ fn test_not_exists_to_join_is_provable() {
 }
 
 #[test]
-#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
 fn test_not_in_to_join_is_provable() {
     let ddl = parse_ddl(
         "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL); CREATE TABLE active_users (id INTEGER PRIMARY KEY)",
