@@ -166,32 +166,38 @@ fn map_binary_operator(op: &str) -> String {
 }
 
 /// Convert a [`QedExpr`] to a [`ProverExpr`].
-pub fn convert_expr(expr: &QedExpr) -> ProverExpr {
+///
+/// `column_types` maps column indices to their [`ProverDataType`]. When `None`,
+/// defaults to [`ProverDataType::Integer`] for all columns.
+pub fn convert_expr(expr: &QedExpr, column_types: Option<&HashMap<usize, ProverDataType>>) -> ProverExpr {
+    let col_ty = |idx: usize| -> ProverDataType {
+        column_types.and_then(|m| m.get(&idx)).cloned().unwrap_or(ProverDataType::Integer)
+    };
     match expr {
-        QedExpr::ColumnRef { index } => ProverExpr::Col { column: VL(*index), ty: ProverDataType::Integer },
+        QedExpr::ColumnRef { index } => ProverExpr::Col { column: VL(*index), ty: col_ty(*index) },
         QedExpr::Literal { value } => match value {
             QedValue::Integer { value: v } => ProverExpr::Op { op: v.to_string(), args: vec![], ty: ProverDataType::Integer, rel: None },
             QedValue::Float { value: v } => ProverExpr::Op { op: v.to_string(), args: vec![], ty: ProverDataType::Real, rel: None },
             QedValue::String { value: v } => ProverExpr::Op { op: format!("\"{}\"", v), args: vec![], ty: ProverDataType::String, rel: None },
             QedValue::Boolean { value: v } => ProverExpr::Op { op: v.to_string(), args: vec![], ty: ProverDataType::Boolean, rel: None },
         },
-        QedExpr::BinOp { op, left, right } => ProverExpr::Op { op: map_binary_operator(op), args: vec![convert_expr(left), convert_expr(right)], ty: ProverDataType::Boolean, rel: None },
+        QedExpr::BinOp { op, left, right } => ProverExpr::Op { op: map_binary_operator(op), args: vec![convert_expr(left, column_types), convert_expr(right, column_types)], ty: ProverDataType::Boolean, rel: None },
         QedExpr::UnOp { op, expr: inner } => {
             let lower = op.to_lowercase();
             let mapped_op = match lower.as_str() { "not" => "not", "neg" | "negative" | "-" => "neg", other => other };
-            ProverExpr::Op { op: mapped_op.to_string(), args: vec![convert_expr(inner)], ty: ProverDataType::Boolean, rel: None }
+            ProverExpr::Op { op: mapped_op.to_string(), args: vec![convert_expr(inner, column_types)], ty: ProverDataType::Boolean, rel: None }
         }
-        QedExpr::Function { name, args } => ProverExpr::Op { op: name.clone(), args: args.iter().map(convert_expr).collect(), ty: ProverDataType::Integer, rel: None },
+        QedExpr::Function { name, args } => ProverExpr::Op { op: name.clone(), args: args.iter().map(|a| convert_expr(a, column_types)).collect(), ty: ProverDataType::Integer, rel: None },
         QedExpr::Null => ProverExpr::Op { op: "null".to_string(), args: vec![], ty: ProverDataType::Custom("NULL".to_string()), rel: None },
         QedExpr::Quantified { cmp, quantifier, subquery } => ProverExpr::Op { op: format!("{}_{}", quantifier, cmp), args: vec![], ty: ProverDataType::Boolean, rel: Some(Box::new(convert_relation(subquery, &HashMap::new()))) },
     }
 }
 
 /// Convert a [`QedAggCall`] to a [`ProverAggCall`].
-pub fn convert_agg_call(call: &QedAggCall) -> ProverAggCall {
+pub fn convert_agg_call(call: &QedAggCall, column_types: Option<&HashMap<usize, ProverDataType>>) -> ProverAggCall {
     let arg_expr = match &call.arg {
         QedAggArg::Star => ProverExpr::Op { op: "star".to_string(), args: vec![], ty: ProverDataType::Integer, rel: None },
-        QedAggArg::Expr(e) => convert_expr(e),
+        QedAggArg::Expr(e) => convert_expr(e, column_types),
     };
     ProverAggCall { op: call.func.clone(), args: vec![arg_expr], distinct: call.distinct, ignore_nulls: false, ty: ProverDataType::Integer }
 }
@@ -202,6 +208,16 @@ pub fn convert_agg_call(call: &QedAggCall) -> ProverAggCall {
 /// See mapping rules in variant match arms.
 #[allow(clippy::too_many_lines)]
 pub fn convert_relation(rel: &QedRelation, schema_index: &HashMap<String, usize>) -> ProverRelation {
+    convert_relation_with_types(rel, schema_index, None)
+}
+
+/// Like [`convert_relation`] but provides column type information for correct
+/// expression type annotations.
+pub fn convert_relation_with_types(
+    rel: &QedRelation,
+    schema_index: &HashMap<String, usize>,
+    column_types: Option<&HashMap<usize, ProverDataType>>,
+) -> ProverRelation {
     match rel {
         QedRelation::Scan { table, .. } => {
             let idx = schema_index.get(table).copied().expect(
@@ -210,34 +226,34 @@ pub fn convert_relation(rel: &QedRelation, schema_index: &HashMap<String, usize>
             ProverRelation::Scan(VL(idx))
         }
         QedRelation::Filter { condition, input } => ProverRelation::Filter {
-            condition: convert_expr(condition),
-            source: Box::new(convert_relation(input, schema_index)),
+            condition: convert_expr(condition, column_types),
+            source: Box::new(convert_relation_with_types(input, schema_index, column_types)),
         },
         QedRelation::Project { exprs, input } => ProverRelation::Project {
-            columns: exprs.iter().map(convert_expr).collect(),
-            source: Box::new(convert_relation(input, schema_index)),
+            columns: exprs.iter().map(|e| convert_expr(e, column_types)).collect(),
+            source: Box::new(convert_relation_with_types(input, schema_index, column_types)),
         },
         QedRelation::Join { left, right, condition } => {
             let cond = match condition {
-                Some(c) => convert_expr(c),
+                Some(c) => convert_expr(c, column_types),
                 None => ProverExpr::Op { op: "true".to_string(), args: vec![], ty: ProverDataType::Boolean, rel: None },
             };
-            ProverRelation::Join { condition: cond, left: Box::new(convert_relation(left, schema_index)), right: Box::new(convert_relation(right, schema_index)), kind: ProverJoinKind::Inner }
+            ProverRelation::Join { condition: cond, left: Box::new(convert_relation_with_types(left, schema_index, column_types)), right: Box::new(convert_relation_with_types(right, schema_index, column_types)), kind: ProverJoinKind::Inner }
         }
-        QedRelation::Union { left, right } => ProverRelation::Union(vec![convert_relation(left, schema_index), convert_relation(right, schema_index)]),
-        QedRelation::Intersect { left, right } => ProverRelation::Intersect(vec![convert_relation(left, schema_index), convert_relation(right, schema_index)]),
-        QedRelation::Except { left, right } => ProverRelation::Except(Box::new(convert_relation(left, schema_index)), Box::new(convert_relation(right, schema_index))),
-        QedRelation::Distinct { input } => ProverRelation::Distinct(Box::new(convert_relation(input, schema_index))),
+        QedRelation::Union { left, right } => ProverRelation::Union(vec![convert_relation_with_types(left, schema_index, column_types), convert_relation_with_types(right, schema_index, column_types)]),
+        QedRelation::Intersect { left, right } => ProverRelation::Intersect(vec![convert_relation_with_types(left, schema_index, column_types), convert_relation_with_types(right, schema_index, column_types)]),
+        QedRelation::Except { left, right } => ProverRelation::Except(Box::new(convert_relation_with_types(left, schema_index, column_types)), Box::new(convert_relation_with_types(right, schema_index, column_types))),
+        QedRelation::Distinct { input } => ProverRelation::Distinct(Box::new(convert_relation_with_types(input, schema_index, column_types))),
         QedRelation::Aggregate { keys, aggs, input } => ProverRelation::Group {
-            keys: keys.iter().map(|k| ProverExpr::Col { column: VL(*k), ty: ProverDataType::Integer }).collect(),
-            columns: aggs.iter().map(convert_agg_call).collect(),
-            source: Box::new(convert_relation(input, schema_index)),
+            keys: keys.iter().map(|k| convert_expr(&QedExpr::ColumnRef { index: *k }, column_types)).collect(),
+            columns: aggs.iter().map(|a| convert_agg_call(a, column_types)).collect(),
+            source: Box::new(convert_relation_with_types(input, schema_index, column_types)),
         },
-        QedRelation::Values { rows } => ProverRelation::Values { schema: vec![], content: rows.iter().map(|row| row.iter().map(convert_expr).collect()).collect() },
+        QedRelation::Values { rows } => ProverRelation::Values { schema: vec![], content: rows.iter().map(|row| row.iter().map(|e| convert_expr(e, column_types)).collect()).collect() },
         QedRelation::QOp { name, args, input } => match name.to_lowercase().as_str() {
-            "sort" | "order" | "orderby" => ProverRelation::Sort { collation: vec![], offset: None, limit: None, source: Box::new(convert_relation(input, schema_index)) },
-            "limit" => ProverRelation::Sort { collation: vec![], offset: None, limit: args.first().map(convert_expr), source: Box::new(convert_relation(input, schema_index)) },
-            _ => { tracing::warn!("convert_relation: unknown QOp '{}', treating as passthrough", name); convert_relation(input, schema_index) }
+            "sort" | "order" | "orderby" => ProverRelation::Sort { collation: vec![], offset: None, limit: None, source: Box::new(convert_relation_with_types(input, schema_index, column_types)) },
+            "limit" => ProverRelation::Sort { collation: vec![], offset: None, limit: args.first().map(|a| convert_expr(a, column_types)), source: Box::new(convert_relation_with_types(input, schema_index, column_types)) },
+            _ => { tracing::warn!("convert_relation: unknown QOp '{}', treating as passthrough", name); convert_relation_with_types(input, schema_index, column_types) }
         },
     }
 }
@@ -261,10 +277,16 @@ pub fn convert_schema(schema: &QedSchema) -> ProverSchema {
 pub fn convert_input(our: &QedInput, schema_name_map: &HashMap<String, String>) -> ProverInput {
     let mut schema_index: HashMap<String, usize> = HashMap::with_capacity(our.schemas.len());
     let mut prover_schemas: Vec<ProverSchema> = Vec::with_capacity(our.schemas.len());
+    let mut column_types: HashMap<usize, ProverDataType> = HashMap::new();
+    let mut col_offset: usize = 0;
     for (i, schema) in our.schemas.iter().enumerate() {
         let qualified = schema_name_map.get(&schema.name).cloned().unwrap_or_else(|| schema.name.clone());
         schema_index.insert(qualified.clone(), i);
         schema_index.insert(schema.name.clone(), i);
+        for (col_idx, ty) in schema.types.iter().enumerate() {
+            column_types.insert(col_offset + col_idx, map_data_type(ty));
+        }
+        col_offset += schema.types.len();
         prover_schemas.push(ProverSchema {
             name: qualified,
             types: schema.types.iter().map(|t| map_data_type(t)).collect(),
@@ -274,7 +296,10 @@ pub fn convert_input(our: &QedInput, schema_name_map: &HashMap<String, String>) 
             fields: schema.fields.clone(),
         });
     }
-    ProverInput { schemas: prover_schemas, queries: (convert_relation(&our.queries[0], &schema_index), convert_relation(&our.queries[1], &schema_index)), help: (our.help.clone(), our.help.clone()) }
+    ProverInput { schemas: prover_schemas, queries: (
+        convert_relation_with_types(&our.queries[0], &schema_index, Some(&column_types)),
+        convert_relation_with_types(&our.queries[1], &schema_index, Some(&column_types)),
+    ), help: (our.help.clone(), our.help.clone()) }
 }
 
 #[cfg(test)]
@@ -373,10 +398,12 @@ mod tests {
     }
 
     #[test] fn test_convert_expr_types() {
-        assert_eq!(convert_expr(&QedExpr::ColumnRef { index: 3 }), ProverExpr::Col { column: VL(3), ty: ProverDataType::Integer });
-        assert_eq!(convert_expr(&QedExpr::Literal { value: QedValue::Integer { value: 42 } }), ProverExpr::Op { op: "42".to_string(), args: vec![], ty: ProverDataType::Integer, rel: None });
-        assert_eq!(convert_expr(&QedExpr::Literal { value: QedValue::Boolean { value: true } }), ProverExpr::Op { op: "true".to_string(), args: vec![], ty: ProverDataType::Boolean, rel: None });
-        assert_eq!(convert_expr(&QedExpr::Null), ProverExpr::Op { op: "null".to_string(), args: vec![], ty: ProverDataType::Custom("NULL".to_string()), rel: None });
+        assert_eq!(convert_expr(&QedExpr::ColumnRef { index: 3 }, None), ProverExpr::Col { column: VL(3), ty: ProverDataType::Integer });
+        let mut types = HashMap::new(); types.insert(3, ProverDataType::String);
+        assert_eq!(convert_expr(&QedExpr::ColumnRef { index: 3 }, Some(&types)), ProverExpr::Col { column: VL(3), ty: ProverDataType::String });
+        assert_eq!(convert_expr(&QedExpr::Literal { value: QedValue::Integer { value: 42 } }, None), ProverExpr::Op { op: "42".to_string(), args: vec![], ty: ProverDataType::Integer, rel: None });
+        assert_eq!(convert_expr(&QedExpr::Literal { value: QedValue::Boolean { value: true } }, None), ProverExpr::Op { op: "true".to_string(), args: vec![], ty: ProverDataType::Boolean, rel: None });
+        assert_eq!(convert_expr(&QedExpr::Null, None), ProverExpr::Op { op: "null".to_string(), args: vec![], ty: ProverDataType::Custom("NULL".to_string()), rel: None });
     }
 
     #[test] fn test_convert_set_operations() {
