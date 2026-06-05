@@ -14,6 +14,7 @@
 
 pub mod ir;
 pub mod prover;
+pub mod prover_compat;
 pub mod schema;
 pub mod translator;
 pub mod verify;
@@ -21,6 +22,7 @@ pub mod verify;
 pub use ir::{QedAggArg, QedAggCall, QedExpr, QedInput, QedRelation, QedSchema, QedValue};
 
 pub use prover::{ProofResult, ProverConfig, ProverError};
+pub use prover_compat::{convert_input, convert_relation, convert_expr, ProverInput, ProverRelation, ProverExpr, ProverSchema, ProverDataType, ProverJoinKind, ProverAggCall, VL, map_data_type};
 
 pub use schema::{
     CheckConstraint, ColumnInfo, ForeignKeyInfo, ReferentialAction, RichSchema, TableConstraints,
