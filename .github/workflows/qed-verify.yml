@@ -1,0 +1,70 @@
+name: QED Verification
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "crates/qed/**"
+      - "crates/core/**"
+      - "crates/rules/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/qed/**"
+      - "crates/core/**"
+      - "crates/rules/**"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust nightly (for qed-prover build)
+        run: rustup toolchain install nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install QED prover (Z3 + CVC5 + build from source)
+        run: chmod +x scripts/install-qed-prover.sh && ./scripts/install-qed-prover.sh
+        timeout-minutes: 30
+        continue-on-error: true
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Run all tests (without prover)
+        run: cargo test --workspace
+
+      - name: Run QED prover E2E tests
+        run: cargo test -p metamorphosis-qed --test prover_e2e_test -- --ignored
+        continue-on-error: true
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace -- -D warnings
+        continue-on-error: true
