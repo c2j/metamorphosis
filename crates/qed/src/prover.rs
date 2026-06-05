@@ -137,7 +137,35 @@ pub fn run_prover(
     });
 
     match rx.recv_timeout(Duration::from_secs(config.timeout_secs)) {
-        Ok(Ok(output)) => parse_prover_output(&output),
+        Ok(Ok(output)) => {
+            let result_path = input_path.with_extension("result");
+            if result_path.exists() {
+                match parse_result_file(&result_path) {
+                    Ok(file_result) if file_result.provable => {
+                        return Ok(ProofResult::Equivalent);
+                    }
+                    Ok(file_result) if file_result.smt_timed_out => {
+                        return Ok(ProofResult::Unknown {
+                            reason: "SMT solver timed out".to_string(),
+                        });
+                    }
+                    Ok(file_result) if file_result.panicked => {
+                        return Ok(ProofResult::Unknown {
+                            reason: "Prover panicked during execution".to_string(),
+                        });
+                    }
+                    Ok(_) => {
+                        return Ok(ProofResult::NotEquivalent {
+                            counterexample: None,
+                        });
+                    }
+                    Err(_) => {
+                        tracing::warn!("Failed to parse .result file, falling back to stdout parsing");
+                    }
+                }
+            }
+            parse_prover_output(&output)
+        }
         Ok(Err(e)) => Err(ProverError::Process(e)),
         Err(_) => {
             if let Ok(mut guard) = child_arc.lock() {

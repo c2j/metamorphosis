@@ -22,13 +22,16 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  verify:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust nightly (for qed-prover build)
+        run: rustup toolchain install nightly
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -40,18 +43,19 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Install QED prover
+      - name: Install QED prover (Z3 + CVC5 + build from source)
         run: chmod +x scripts/install-qed-prover.sh && ./scripts/install-qed-prover.sh
+        timeout-minutes: 30
         continue-on-error: true
 
       - name: Build
         run: cargo build --workspace
 
-      - name: Run all tests
+      - name: Run all tests (without prover)
         run: cargo test --workspace
 
-      - name: Run QED-specific tests (with prover)
-        run: cargo test -p metamorphosis-qed -- --include-ignored
+      - name: Run QED prover E2E tests
+        run: cargo test -p metamorphosis-qed --test prover_e2e_test -- --ignored
         continue-on-error: true
 
   lint:
