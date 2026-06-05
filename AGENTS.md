@@ -4,14 +4,14 @@
 
 SQL semantic rewriting & data quality probe engine built on top of `ogsql-parser`. Consumes AST output (never parses SQL directly), applies pluggable rules to produce diagnostic/rewritten SQL.
 
-**Current state**: MVP — engine skeleton + 2 built-in rules. Source code in `crates/`.
+**Current state**: MVP — engine skeleton + 3 built-in rules + QED offline verification. Source code in `crates/`.
 
 ## Architecture (4 layers)
 
 ```
 Layer 4: CLI / HTTP API / MCP Tool
 Layer 3: RuleRegistry → RuleChain → RewriteEngine → SuggestionEngine
-Layer 2: Individual rules (EliminateSelectStar, DetectDuplicateEqKeys, …)
+Layer 2: Individual rules (EliminateSelectStar, DetectDuplicateEqKeys, SubqueryToJoin, …)
 Layer 1: ogsql-parser (AST / Visitor / SchemaMap / Formatter)
 ```
 
