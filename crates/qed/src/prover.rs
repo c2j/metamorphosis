@@ -6,11 +6,13 @@
 //!
 //! Tests mock `std::process::Output` directly — no `qed-prover` binary required.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::ir::QedInput;
+use crate::prover_compat;
 
 /// Result of a QED equivalence proof attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,10 +83,23 @@ pub enum ProverError {
 
 /// Run the QED prover on the given [`QedInput`].
 ///
-/// Serializes `input` to a temporary JSON file, spawns the `qed-prover` binary
-/// with a timeout, and returns the parsed [`ProofResult`].
-pub fn run_prover(input: &QedInput, config: &ProverConfig) -> Result<ProofResult, ProverError> {
-    let json = serde_json::to_string_pretty(input)
+/// Converts `input` to the prover's native JSON format via [`prover_compat`],
+/// writes to a temporary file, spawns the `qed-prover` binary with a timeout,
+/// and returns the parsed [`ProofResult`].
+///
+/// If `schema_name_map` is `None`, table names are used as-is for schema
+/// qualification. Provide a map (e.g., `"users"` → `"PUBLIC.users"`) for
+/// qualified names matching the prover's convention.
+pub fn run_prover(
+    input: &QedInput,
+    config: &ProverConfig,
+    schema_name_map: Option<&HashMap<String, String>>,
+) -> Result<ProofResult, ProverError> {
+    let name_map = schema_name_map
+        .cloned()
+        .unwrap_or_default();
+    let prover_input = prover_compat::convert_input(input, &name_map);
+    let json = serde_json::to_string_pretty(&prover_input)
         .map_err(|e| ProverError::Serialization(e.to_string()))?;
 
     let temp_dir =

@@ -43,13 +43,30 @@ pub struct VerificationResult {
 /// Verify that a rewrite preserves semantic equivalence using QED.
 ///
 /// Translates both the original and rewritten statements to QED Relations,
-/// builds a [`QedInput`] with schema constraints, and invokes the prover.
+/// builds a [`QedInput`] with schema constraints, converts to the prover's
+/// native format, and invokes the prover.
+///
+/// `schema_name_map` optionally maps table names to qualified names (e.g.
+/// `"users"` → `"PUBLIC.users"`) for the prover. When `None`, table names
+/// are used as-is.
 pub fn verify_rewrite(
     rule_id: &str,
     original: &Statement,
     rewritten: &Statement,
     schema: &RichSchema,
     prover_config: &ProverConfig,
+) -> Result<VerificationResult, VerifyError> {
+    verify_rewrite_with_names(rule_id, original, rewritten, schema, prover_config, None)
+}
+
+/// Like [`verify_rewrite`], but accepts an optional schema name qualification map.
+pub fn verify_rewrite_with_names(
+    rule_id: &str,
+    original: &Statement,
+    rewritten: &Statement,
+    schema: &RichSchema,
+    prover_config: &ProverConfig,
+    schema_name_map: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<VerificationResult, VerifyError> {
     let translator = AstTranslator::new(schema);
     let start = Instant::now();
@@ -64,7 +81,7 @@ pub fn verify_rewrite(
         help: format!("Verify semantic equivalence for rule '{rule_id}'"),
     };
 
-    let proof = crate::prover::run_prover(&input, prover_config)?;
+    let proof = crate::prover::run_prover(&input, prover_config, schema_name_map)?;
     let elapsed = start.elapsed().as_millis() as u64;
 
     Ok(VerificationResult {
