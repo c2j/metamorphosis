@@ -258,7 +258,9 @@ name = "metamorphosis-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "encoding_rs",
  "metamorphosis-core",
+ "metamorphosis-qed",
  "metamorphosis-rules",
  "ogsql-parser",
  "serde",
