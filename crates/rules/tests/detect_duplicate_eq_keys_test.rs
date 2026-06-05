@@ -26,8 +26,9 @@ fn test_suggest(sql: &str) -> (Vec<Statement>, Vec<metamorphosis_core::Suggestio
 #[test]
 fn test_generate_probe_for_two_eq_keys() {
     // Column = unknown-variable patterns (v_ prefixed names not in FROM aliases)
-    let (_statements, suggestions) =
-        test_suggest("SELECT * FROM orders WHERE orders.account_id = v_user_id AND orders.status = v_status");
+    let (_statements, suggestions) = test_suggest(
+        "SELECT * FROM orders WHERE orders.account_id = v_user_id AND orders.status = v_status",
+    );
     assert!(
         !suggestions.is_empty(),
         "Rule should detect two eq conditions"
@@ -38,8 +39,9 @@ fn test_generate_probe_for_two_eq_keys() {
 #[test]
 fn test_probe_sql_contains_group_by() {
     // Column = unknown-variable patterns (v_ prefixed names not in FROM aliases)
-    let (_statements, suggestions) =
-        test_suggest("SELECT * FROM users WHERE users.tenant_id = v_tenant AND users.user_id = v_user");
+    let (_statements, suggestions) = test_suggest(
+        "SELECT * FROM users WHERE users.tenant_id = v_tenant AND users.user_id = v_user",
+    );
 
     assert!(!suggestions.is_empty());
     if let RewriteAction::Generate { ref stmt, .. } = suggestions[0].action {

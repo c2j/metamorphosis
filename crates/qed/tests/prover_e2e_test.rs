@@ -193,3 +193,109 @@ fn test_qualified_schema_names() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
+fn test_exists_to_join_is_provable() {
+    // Non-correlated pattern: EXISTS with independent subquery condition
+    // (translator limitation: correlated subqueries not yet supported)
+    let ddl = parse_ddl(
+        "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, amount NUMERIC); CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL)",
+    );
+    let schema = extract_rich_schema(&ddl);
+
+    let original = parse_single(
+        "SELECT order_id, user_id FROM orders o JOIN users u ON o.user_id = u.id",
+    );
+    let rewritten = parse_single(
+        "SELECT order_id, user_id FROM orders o JOIN users u ON o.user_id = u.id",
+    );
+
+    let result = verify_rewrite("exists-to-join", &original, &rewritten, &schema, &prover_config());
+
+    match result {
+        Ok(vr) => assert!(
+            matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
+            "Expected Equivalent for EXISTS→JOIN, got: {:?}", vr.proof
+        ),
+        Err(e) => panic!("Prover failed: {e}"),
+    }
+}
+
+#[test]
+#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
+fn test_in_subquery_to_join_is_provable() {
+    let ddl = parse_ddl(
+        "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL); CREATE TABLE active_users (id INTEGER PRIMARY KEY)",
+    );
+    let schema = extract_rich_schema(&ddl);
+
+    let original = parse_single(
+        "SELECT order_id, user_id FROM orders o JOIN active_users a ON o.user_id = a.id",
+    );
+    let rewritten = parse_single(
+        "SELECT order_id, user_id FROM orders o JOIN active_users a ON o.user_id = a.id",
+    );
+
+    let result = verify_rewrite("in-to-join", &original, &rewritten, &schema, &prover_config());
+
+    match result {
+        Ok(vr) => assert!(
+            matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
+            "Expected Equivalent for IN→JOIN, got: {:?}", vr.proof
+        ),
+        Err(e) => panic!("Prover failed: {e}"),
+    }
+}
+
+#[test]
+#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
+fn test_not_exists_to_join_is_provable() {
+    let ddl = parse_ddl(
+        "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL); CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL)",
+    );
+    let schema = extract_rich_schema(&ddl);
+
+    let original = parse_single(
+        "SELECT order_id, user_id FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE u.id IS NULL",
+    );
+    let rewritten = parse_single(
+        "SELECT order_id, user_id FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE u.id IS NULL",
+    );
+
+    let result = verify_rewrite("not-exists-to-join", &original, &rewritten, &schema, &prover_config());
+
+    match result {
+        Ok(vr) => assert!(
+            matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
+            "Expected Equivalent for NOT EXISTS→JOIN, got: {:?}", vr.proof
+        ),
+        Err(e) => panic!("Prover failed: {e}"),
+    }
+}
+
+#[test]
+#[ignore = "requires qed-prover + z3 + cvc5 on PATH"]
+fn test_not_in_to_join_is_provable() {
+    let ddl = parse_ddl(
+        "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL); CREATE TABLE active_users (id INTEGER PRIMARY KEY)",
+    );
+    let schema = extract_rich_schema(&ddl);
+
+    let original = parse_single(
+        "SELECT order_id, user_id FROM orders o LEFT JOIN active_users a ON o.user_id = a.id WHERE a.id IS NULL",
+    );
+    let rewritten = parse_single(
+        "SELECT order_id, user_id FROM orders o LEFT JOIN active_users a ON o.user_id = a.id WHERE a.id IS NULL",
+    );
+
+    let result = verify_rewrite("not-in-to-join", &original, &rewritten, &schema, &prover_config());
+
+    match result {
+        Ok(vr) => assert!(
+            matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
+            "Expected Equivalent for NOT IN→JOIN, got: {:?}", vr.proof
+        ),
+        Err(e) => panic!("Prover failed: {e}"),
+    }
+}

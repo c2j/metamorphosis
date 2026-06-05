@@ -163,11 +163,7 @@ impl EqPredicateCollector {
             .is_some_and(|p| self.table_aliases.contains(p))
     }
 
-    fn classify_column_pair(
-        &self,
-        l_parts: &[String],
-        r_parts: &[String],
-    ) -> (bool, bool) {
+    fn classify_column_pair(&self, l_parts: &[String], r_parts: &[String]) -> (bool, bool) {
         if let Some(ref vars) = self.known_variables {
             let l_name = l_parts.last();
             let r_name = r_parts.last();
@@ -183,33 +179,20 @@ impl EqPredicateCollector {
     fn handle_equality(&mut self, left: &Expr, right: &Expr) {
         match (left, right) {
             // Column = Parameter/MyBatisParam → tier1: parameterized filter (variable input)
-            (
-                Expr::ColumnRef(name),
-                Expr::Parameter(_) | Expr::MyBatisParam(_),
-            ) => {
+            (Expr::ColumnRef(name), Expr::Parameter(_) | Expr::MyBatisParam(_)) => {
                 if let Some(col) = name.last() {
                     self.tier1.push(col.clone());
                 }
             }
             // Parameter/MyBatisParam = Column → tier1
-            (
-                Expr::Parameter(_) | Expr::MyBatisParam(_),
-                Expr::ColumnRef(name),
-            ) => {
+            (Expr::Parameter(_) | Expr::MyBatisParam(_), Expr::ColumnRef(name)) => {
                 if let Some(col) = name.last() {
                     self.tier1.push(col.clone());
                 }
             }
             // Column = Literal → non_eq: hardcoded literal has no selectivity as candidate key
             // (e.g. `sub_src_type = '8'` is a constant filter, not a variable-driven equality)
-            (
-                Expr::ColumnRef(_),
-                Expr::Literal(_),
-            )
-            | (
-                Expr::Literal(_),
-                Expr::ColumnRef(_),
-            ) => {
+            (Expr::ColumnRef(_), Expr::Literal(_)) | (Expr::Literal(_), Expr::ColumnRef(_)) => {
                 self.non_eq.push(make_binary_eq(left, right));
             }
             (Expr::ColumnRef(l_parts), Expr::ColumnRef(r_parts)) => {
@@ -281,10 +264,7 @@ fn collect_eq_predicates(
     from: &[TableRef],
     known_variables: Option<&HashSet<String>>,
 ) -> EqPredicateCollector {
-    let mut collector = EqPredicateCollector::new(
-        from,
-        known_variables.cloned(),
-    );
+    let mut collector = EqPredicateCollector::new(from, known_variables.cloned());
     if let Some(expr) = where_clause {
         collect_from(expr, &mut collector);
     }

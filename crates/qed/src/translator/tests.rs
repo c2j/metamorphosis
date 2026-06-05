@@ -272,3 +272,15 @@ fn test_multiple_from_cross_join() {
         _ => panic!("expected cross Join, got {rel:?}"),
     }
 }
+
+#[test]
+fn test_join_no_alias() {
+    let schema = users_orders_schema();
+    let result = translate_sql("SELECT id FROM users JOIN orders ON users.id = orders.user_id", &schema);
+    match &result {
+        Ok(QedRelation::Project { input, .. }) => {
+            assert!(matches!(input.as_ref(), QedRelation::Join { .. }), "expected Join inside Project, got: {input:?}");
+        }
+        _ => panic!("expected Ok(Project with Join), got: {:?}", result),
+    }
+}
