@@ -149,10 +149,17 @@ pub fn write_qed_input_to_file(input: &QedInput, path: &PathBuf) -> Result<(), P
 
 /// Parse raw prover process output into a [`ProofResult`].
 ///
-/// Recognises keywords in stdout (case-insensitive):
-/// - "equivalent" (but not "not equivalent" / "notequivalent") → [`ProofResult::Equivalent`]
-/// - "notequivalent" or "not equivalent" → [`ProofResult::NotEquivalent`]
-/// - "unknown" → [`ProofResult::Unknown`]
+/// Recognises keywords in stdout (case-insensitive).
+///
+/// **Real qed-prover format** (from `github.com/qed-solver/prover`):
+/// - `"Equivalence is provable for ..."` → [`ProofResult::Equivalent`]
+/// - `"Equivalence is not provable for ..."` → [`ProofResult::NotEquivalent`]
+/// - `"Trivially true!"` → [`ProofResult::Equivalent`]
+///
+/// **Legacy format** (our original mock output):
+/// - `"equivalent"` (but not `"not equivalent"`) → [`ProofResult::Equivalent`]
+/// - `"notequivalent"` or `"not equivalent"` → [`ProofResult::NotEquivalent`]
+/// - `"unknown"` → [`ProofResult::Unknown`]
 ///
 /// Falls back to exit code 0 = Equivalent if no keywords matched.
 fn parse_prover_output(output: &std::process::Output) -> Result<ProofResult, ProverError> {
@@ -161,25 +168,66 @@ fn parse_prover_output(output: &std::process::Output) -> Result<ProofResult, Pro
 
     let stdout_lower = stdout.to_lowercase();
 
-    if stdout_lower.contains("equivalent")
+    // Real prover format: "provable" / "not provable"
+    let is_provable =
+        stdout_lower.contains("provable") && !stdout_lower.contains("not provable");
+    let is_not_provable = stdout_lower.contains("not provable");
+
+    // Legacy format: "equivalent" / "not equivalent"
+    let is_equivalent = stdout_lower.contains("equivalent")
         && !stdout_lower.contains("not equivalent")
-        && !stdout_lower.contains("notequivalent")
-    {
+        && !stdout_lower.contains("notequivalent");
+    let is_not_equivalent =
+        stdout_lower.contains("notequivalent") || stdout_lower.contains("not equivalent");
+
+    // Both formats: "trivially true", "unknown", "timed out"
+    let is_trivially_true = stdout_lower.contains("trivially true");
+    let is_unknown = stdout_lower.contains("unknown") || stdout_lower.contains("timed out");
+
+    if is_provable || is_equivalent || is_trivially_true {
         Ok(ProofResult::Equivalent)
-    } else if stdout_lower.contains("notequivalent") || stdout_lower.contains("not equivalent") {
+    } else if is_not_provable || is_not_equivalent {
         Ok(ProofResult::NotEquivalent {
             counterexample: extract_counterexample(&stdout),
         })
-    } else if stdout_lower.contains("unknown") {
+    } else if is_unknown {
         Ok(ProofResult::Unknown {
             reason: extract_reason(&stdout, &stderr),
         })
     } else if output.status.success() {
-        // Exit code 0, no keyword matched.
+        // Exit code 0, no keyword matched — assume equivalent.
         Ok(ProofResult::Equivalent)
     } else {
         Err(ProverError::UnexpectedOutput { stdout, stderr })
     }
+}
+
+/// Structured result parsed from the qed-prover's `.result` JSON file.
+///
+/// The prover creates a `.result` file next to each input JSON containing
+/// detailed timing and outcome information.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ProverFileResult {
+    /// Whether the equivalence was proven.
+    pub provable: bool,
+    /// Whether the prover panicked during execution.
+    pub panicked: bool,
+    /// Whether the input used only complete (fully supported) SQL features.
+    pub complete_fragment: bool,
+    /// Whether the SMT solver timed out.
+    pub smt_timed_out: bool,
+}
+
+/// Parse a prover `.result` JSON file for structured output.
+///
+/// The qed-prover creates a `.result` file adjacent to the input JSON file
+/// after processing. This function reads and parses that file.
+pub fn parse_result_file(path: &std::path::Path) -> Result<ProverFileResult, ProverError> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| ProverError::Io(format!("failed to read .result file: {e}")))?;
+    serde_json::from_str(&content)
+        .map_err(|e| ProverError::Serialization(format!("failed to parse .result JSON: {e}")))
 }
 
 /// Extract a counterexample snippet from prover stdout.
@@ -324,5 +372,79 @@ mod tests {
         let stdout = "Result: NotEquivalent\nNo details\n";
         let ce = extract_counterexample(stdout);
         assert!(ce.is_none());
+    }
+
+    // --- Real qed-prover output format tests ---
+
+    #[test]
+    fn test_parse_provable() {
+        let output = make_output("Equivalence is provable for test.json\n", "", 0);
+        let result = parse_prover_output(&output).unwrap();
+        assert_eq!(result, ProofResult::Equivalent);
+    }
+
+    #[test]
+    fn test_parse_not_provable() {
+        let output = make_output("Equivalence is not provable for test.json\n", "", 0);
+        let result = parse_prover_output(&output).unwrap();
+        assert!(matches!(result, ProofResult::NotEquivalent { .. }));
+        if let ProofResult::NotEquivalent { counterexample } = &result {
+            assert!(counterexample.is_none());
+        }
+    }
+
+    #[test]
+    fn test_parse_trivially_true() {
+        let output = make_output(
+            "Trivially true!\nEquivalence is provable for test.json\n",
+            "",
+            0,
+        );
+        let result = parse_prover_output(&output).unwrap();
+        assert_eq!(result, ProofResult::Equivalent);
+    }
+
+    #[test]
+    fn test_parse_prover_with_stderr() {
+        let output = make_output(
+            "Equivalence is provable for test.json\n",
+            "info: translating...\n",
+            0,
+        );
+        let result = parse_prover_output(&output).unwrap();
+        assert_eq!(result, ProofResult::Equivalent);
+    }
+
+    #[test]
+    fn test_parse_result_file_provable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.result");
+        std::fs::write(
+            &path,
+            r#"{"provable":true,"panicked":false,"complete_fragment":true,"smt_timed_out":false}"#,
+        )
+        .unwrap();
+        let result = parse_result_file(&path).unwrap();
+        assert!(result.provable);
+        assert!(!result.panicked);
+    }
+
+    #[test]
+    fn test_parse_result_file_not_provable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.result");
+        std::fs::write(
+            &path,
+            r#"{"provable":false,"panicked":false,"complete_fragment":true,"smt_timed_out":false}"#,
+        )
+        .unwrap();
+        let result = parse_result_file(&path).unwrap();
+        assert!(!result.provable);
+    }
+
+    #[test]
+    fn test_parse_result_file_missing() {
+        let result = parse_result_file(std::path::Path::new("/tmp/nonexistent_12345.result"));
+        assert!(result.is_err());
     }
 }
