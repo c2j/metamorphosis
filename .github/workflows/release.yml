@@ -101,7 +101,7 @@ jobs:
         run: cargo install cargo-zigbuild
 
       - name: Build
-        run: cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.31
+        run: cargo zigbuild --release --target aarch64-unknown-linux-gnu
 
       - name: Strip
         run: aarch64-linux-gnu-strip --strip-unneeded target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
@@ -175,6 +175,7 @@ jobs:
 
   release:
     name: Create GitHub Release
+    if: always()
     needs: [build-linux-x86_64, build-linux-arm64, build-windows-x86_64]
     runs-on: ubuntu-latest
     steps:
