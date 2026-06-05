@@ -194,13 +194,14 @@ mod tests {
         };
 
         let result = verify_rewrite("identity-test", &original, &rewritten, &schema, &config);
-        // Should fail because prover binary doesn't exist, but translation
-        // should have succeeded — only the prover step fails.
-        assert!(result.is_err());
-        let err = result.unwrap_err();
+        // Z3 solver handles this directly — identity queries are Equivalent.
+        // The binary prover is only a fallback if Z3 fails.
+        assert!(result.is_ok(), "Expected Ok, got: {result:?}");
+        let vr = result.unwrap();
         assert!(
-            matches!(err, VerifyError::Prover(_)),
-            "Expected Prover error, got: {err:?}"
+            matches!(vr.proof, crate::prover::ProofResult::Equivalent),
+            "Expected Equivalent, got: {:?}",
+            vr.proof
         );
     }
 

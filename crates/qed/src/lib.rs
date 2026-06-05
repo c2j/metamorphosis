@@ -18,6 +18,7 @@ pub mod prover_compat;
 pub mod schema;
 pub mod translator;
 pub mod verify;
+pub mod z3_solver;
 
 pub use ir::{QedAggArg, QedAggCall, QedExpr, QedInput, QedRelation, QedSchema, QedValue};
 

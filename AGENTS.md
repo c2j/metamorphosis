@@ -4,7 +4,7 @@
 
 SQL semantic rewriting & data quality probe engine built on top of `ogsql-parser`. Consumes AST output (never parses SQL directly), applies pluggable rules to produce diagnostic/rewritten SQL.
 
-**Current state**: MVP — engine skeleton + 3 built-in rules + QED offline verification. Source code in `crates/`.
+**Current state**: MVP — engine skeleton + 3 built-in rules + QED offline verification (embedded Z3). Source code in `crates/`.
 
 ## Architecture (4 layers)
 
@@ -15,7 +15,7 @@ Layer 2: Individual rules (EliminateSelectStar, DetectDuplicateEqKeys, SubqueryT
 Layer 1: ogsql-parser (AST / Visitor / SchemaMap / Formatter)
 ```
 
-Workspace: `crates/core/` (engine + abstractions), `crates/rules/` (built-in rules), `crates/cli/` (CLI).
+Workspace: `crates/core/` (engine + abstractions), `crates/rules/` (built-in rules), `crates/cli/` (CLI), `crates/qed/` (QED verification with embedded Z3).
 
 ## Key Design Constraints
 
