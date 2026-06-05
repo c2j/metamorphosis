@@ -105,7 +105,7 @@ pub fn verify_rewrite_with_names(
         proof,
         elapsed_ms: elapsed,
         original_columns: orig_columns,
-        rewritten_columns: rewritten_columns,
+        rewritten_columns,
     })
 }
 
@@ -114,12 +114,8 @@ pub fn verify_rewrite_with_names(
 /// Returns `None` when column names cannot be determined (e.g. raw `Values`
 /// without context). Returns `Some` even if some names are synthetic (e.g.
 /// `"fn_name_0"` for function-call columns).
-pub(crate) fn output_column_names(
-    rel: &QedRelation,
-    schemas: &[QedSchema],
-) -> Option<Vec<String>> {
-    let map: HashMap<&str, &QedSchema> =
-        schemas.iter().map(|s| (s.name.as_str(), s)).collect();
+pub(crate) fn output_column_names(rel: &QedRelation, schemas: &[QedSchema]) -> Option<Vec<String>> {
+    let map: HashMap<&str, &QedSchema> = schemas.iter().map(|s| (s.name.as_str(), s)).collect();
     output_column_names_rec(rel, &map)
 }
 
@@ -206,15 +202,13 @@ fn output_column_names_rec<'a>(
 ///
 /// Does nothing when either side has unknown column names, different arities,
 /// or genuinely different column sets.
-fn normalize_output_columns(
-    q1: &mut QedRelation,
-    q2: &mut QedRelation,
-    schemas: &[QedSchema],
-) {
+fn normalize_output_columns(q1: &mut QedRelation, q2: &mut QedRelation, schemas: &[QedSchema]) {
     let names1 = output_column_names(q1, schemas);
     let names2 = output_column_names(q2, schemas);
 
-    let (Some(n1), Some(n2)) = (&names1, &names2) else { return; };
+    let (Some(n1), Some(n2)) = (&names1, &names2) else {
+        return;
+    };
 
     if n1.len() != n2.len() {
         return;
@@ -235,7 +229,9 @@ fn normalize_output_columns(
     let perm: Vec<usize> = n1
         .iter()
         .map(|name| {
-            n2.iter().position(|n| n == name).expect("set equality check ensures this succeeds")
+            n2.iter()
+                .position(|n| n == name)
+                .expect("set equality check ensures this succeeds")
         })
         .collect();
 
@@ -246,7 +242,10 @@ fn normalize_output_columns(
 
     let old_q2 = std::mem::replace(q2, QedRelation::Values { rows: vec![] });
     *q2 = QedRelation::Project {
-        exprs: perm.iter().map(|&i| QedExpr::ColumnRef { index: i }).collect(),
+        exprs: perm
+            .iter()
+            .map(|&i| QedExpr::ColumnRef { index: i })
+            .collect(),
         input: Box::new(old_q2),
     };
 }
@@ -315,7 +314,11 @@ mod tests {
 
     fn parse_single(sql: &str) -> Statement {
         let (stmts, _) = ogsql_parser::Parser::parse_sql(sql);
-        stmts.into_iter().next().map(|si| si.statement).expect("expected one statement")
+        stmts
+            .into_iter()
+            .next()
+            .map(|si| si.statement)
+            .expect("expected one statement")
     }
 
     #[test]
@@ -335,9 +338,7 @@ mod tests {
 
     #[test]
     fn test_verify_rewrite_identity() {
-        let ddl = parse_ddl(
-            "CREATE TABLE t (a INTEGER PRIMARY KEY, b TEXT NOT NULL)",
-        );
+        let ddl = parse_ddl("CREATE TABLE t (a INTEGER PRIMARY KEY, b TEXT NOT NULL)");
         let schema = crate::schema::extract_rich_schema(&ddl);
 
         let original = parse_single("SELECT a, b FROM t WHERE a = 1");
@@ -365,30 +366,35 @@ mod tests {
 
     #[test]
     fn test_output_column_names_scan() {
-        let ddl = parse_ddl(
-            "CREATE TABLE t (a INTEGER, b TEXT, c BOOLEAN)",
-        );
+        let ddl = parse_ddl("CREATE TABLE t (a INTEGER, b TEXT, c BOOLEAN)");
         let schema = crate::schema::extract_rich_schema(&ddl);
         let qed = build_qed_schemas(&schema);
 
-        let scan = QedRelation::Scan { table: "t".into(), fields: vec![] };
+        let scan = QedRelation::Scan {
+            table: "t".into(),
+            fields: vec![],
+        };
         let names = output_column_names(&scan, &qed).unwrap();
         assert_eq!(names, vec!["a", "b", "c"]);
 
-        let scan2 = QedRelation::Scan { table: "t".into(), fields: vec![2, 0] };
+        let scan2 = QedRelation::Scan {
+            table: "t".into(),
+            fields: vec![2, 0],
+        };
         let names2 = output_column_names(&scan2, &qed).unwrap();
         assert_eq!(names2, vec!["c", "a"]);
     }
 
     #[test]
     fn test_output_column_names_project() {
-        let ddl = parse_ddl(
-            "CREATE TABLE t (x INTEGER, y INTEGER)",
-        );
+        let ddl = parse_ddl("CREATE TABLE t (x INTEGER, y INTEGER)");
         let schema = crate::schema::extract_rich_schema(&ddl);
         let qed = build_qed_schemas(&schema);
 
-        let scan = QedRelation::Scan { table: "t".into(), fields: vec![] };
+        let scan = QedRelation::Scan {
+            table: "t".into(),
+            fields: vec![],
+        };
         let proj = QedRelation::Project {
             exprs: vec![
                 QedExpr::ColumnRef { index: 1 },
@@ -402,14 +408,15 @@ mod tests {
 
     #[test]
     fn test_normalize_output_columns_permutes() {
-        let ddl = parse_ddl(
-            "CREATE TABLE t (a INTEGER, b TEXT, c BOOLEAN)",
-        );
+        let ddl = parse_ddl("CREATE TABLE t (a INTEGER, b TEXT, c BOOLEAN)");
         let schema = crate::schema::extract_rich_schema(&ddl);
         let qed = build_qed_schemas(&schema);
 
         // q1: Scan (all cols in order) → [a, b, c]
-        let mut q1 = QedRelation::Scan { table: "t".into(), fields: vec![] };
+        let mut q1 = QedRelation::Scan {
+            table: "t".into(),
+            fields: vec![],
+        };
         // q2: Project reordering → [c, a, b]
         let mut q2 = QedRelation::Project {
             exprs: vec![
@@ -417,7 +424,10 @@ mod tests {
                 QedExpr::ColumnRef { index: 0 },
                 QedExpr::ColumnRef { index: 1 },
             ],
-            input: Box::new(QedRelation::Scan { table: "t".into(), fields: vec![] }),
+            input: Box::new(QedRelation::Scan {
+                table: "t".into(),
+                fields: vec![],
+            }),
         };
 
         normalize_output_columns(&mut q1, &mut q2, &qed);
@@ -429,9 +439,7 @@ mod tests {
 
     #[test]
     fn test_verify_rewrite_different_column_order_is_equivalent() {
-        let ddl = parse_ddl(
-            "CREATE TABLE t (a INTEGER PRIMARY KEY, b TEXT NOT NULL, c BOOLEAN)",
-        );
+        let ddl = parse_ddl("CREATE TABLE t (a INTEGER PRIMARY KEY, b TEXT NOT NULL, c BOOLEAN)");
         let schema = crate::schema::extract_rich_schema(&ddl);
         let config = ProverConfig::default();
 

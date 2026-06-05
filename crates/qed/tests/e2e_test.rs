@@ -24,7 +24,11 @@ fn parse_ddl(sql: &str) -> Vec<Statement> {
 
 fn parse_single(sql: &str) -> Statement {
     let (stmts, _) = Parser::parse_sql(sql);
-    stmts.into_iter().next().expect("expected one statement").statement
+    stmts
+        .into_iter()
+        .next()
+        .expect("expected one statement")
+        .statement
 }
 
 fn make_test_schema_ddl() -> &'static str {
@@ -41,9 +45,7 @@ fn make_schema_map() -> SchemaMap {
     schema
 }
 
-fn build_qed_schemas_from_rich(
-    schema: &metamorphosis_qed::schema::RichSchema,
-) -> Vec<QedSchema> {
+fn build_qed_schemas_from_rich(schema: &metamorphosis_qed::schema::RichSchema) -> Vec<QedSchema> {
     schema
         .tables
         .iter()
@@ -57,7 +59,12 @@ fn build_qed_schemas_from_rich(
                 .filter_map(|col| table.column_index(col))
                 .collect(),
             nullable: table.columns.iter().map(|c| c.nullable).collect(),
-            guaranteed: table.constraints.check.iter().map(|c| c.expression.clone()).collect(),
+            guaranteed: table
+                .constraints
+                .check
+                .iter()
+                .map(|c| c.expression.clone())
+                .collect(),
             fields: table.columns.iter().map(|c| c.name.clone()).collect(),
         })
         .collect()

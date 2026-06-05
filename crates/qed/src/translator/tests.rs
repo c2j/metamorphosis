@@ -14,7 +14,14 @@ fn users_orders_schema() -> RichSchema {
 
 fn translate_sql(sql: &str, schema: &RichSchema) -> Result<QedRelation, TranslateError> {
     let (stmts, errors) = ogsql_parser::Parser::parse_sql(sql);
-    assert!(errors.is_empty() || errors.iter().all(|e| { let _ = e; true }), "Parse errors: {errors:?}");
+    assert!(
+        errors.is_empty()
+            || errors.iter().all(|e| {
+                let _ = e;
+                true
+            }),
+        "Parse errors: {errors:?}"
+    );
     let stmts: Vec<_> = stmts.into_iter().map(|si| si.statement).collect();
     AstTranslator::new(schema).translate(&stmts[0])
 }
@@ -24,7 +31,10 @@ fn test_simple_scan() {
     let schema = users_orders_schema();
     let rel = translate_sql("SELECT * FROM users", &schema).unwrap();
     match &rel {
-        QedRelation::Scan { table, fields } => { assert_eq!(table, "users"); assert!(fields.is_empty()); }
+        QedRelation::Scan { table, fields } => {
+            assert_eq!(table, "users");
+            assert!(fields.is_empty());
+        }
         _ => panic!("expected Scan, got {rel:?}"),
     }
 }
@@ -59,9 +69,17 @@ fn test_projection() {
 #[test]
 fn test_join() {
     let schema = users_orders_schema();
-    let rel = translate_sql("SELECT * FROM users u JOIN orders o ON u.id = o.user_id", &schema).unwrap();
+    let rel = translate_sql(
+        "SELECT * FROM users u JOIN orders o ON u.id = o.user_id",
+        &schema,
+    )
+    .unwrap();
     match &rel {
-        QedRelation::Join { left, right, condition } => {
+        QedRelation::Join {
+            left,
+            right,
+            condition,
+        } => {
             assert!(matches!(&**left, QedRelation::Scan { .. }));
             assert!(matches!(&**right, QedRelation::Scan { .. }));
             assert!(condition.is_some());
@@ -75,17 +93,15 @@ fn test_group_by() {
     let schema = users_orders_schema();
     let rel = translate_sql("SELECT id, COUNT(*) FROM users GROUP BY id", &schema).unwrap();
     match &rel {
-        QedRelation::Project { input, .. } => {
-            match input.as_ref() {
-                QedRelation::Aggregate { keys, aggs, .. } => {
-                    assert_eq!(*keys, vec![0]);
-                    assert_eq!(aggs.len(), 1);
-                    assert_eq!(aggs[0].func, "count");
-                    assert!(matches!(aggs[0].arg, QedAggArg::Star));
-                }
-                _ => panic!("expected Aggregate, got {input:?}"),
+        QedRelation::Project { input, .. } => match input.as_ref() {
+            QedRelation::Aggregate { keys, aggs, .. } => {
+                assert_eq!(*keys, vec![0]);
+                assert_eq!(aggs.len(), 1);
+                assert_eq!(aggs[0].func, "count");
+                assert!(matches!(aggs[0].arg, QedAggArg::Star));
             }
-        }
+            _ => panic!("expected Aggregate, got {input:?}"),
+        },
         _ => panic!("expected Aggregate, got {rel:?}"),
     }
 }
@@ -116,7 +132,8 @@ fn test_limit() {
     let rel = translate_sql("SELECT * FROM users LIMIT 10", &schema).unwrap();
     match &rel {
         QedRelation::QOp { name, args, input } => {
-            assert_eq!(name, "Limit"); assert_eq!(args.len(), 1);
+            assert_eq!(name, "Limit");
+            assert_eq!(args.len(), 1);
             assert!(matches!(&**input, QedRelation::Scan { .. }));
         }
         _ => panic!("expected QOp(Limit), got {rel:?}"),
@@ -136,7 +153,11 @@ fn test_offset() {
 #[test]
 fn test_union_all() {
     let schema = users_orders_schema();
-    let rel = translate_sql("SELECT id FROM users UNION ALL SELECT id FROM admins", &schema).unwrap();
+    let rel = translate_sql(
+        "SELECT id FROM users UNION ALL SELECT id FROM admins",
+        &schema,
+    )
+    .unwrap();
     match &rel {
         QedRelation::Union { left, right } => {
             assert!(matches!(&**left, QedRelation::Project { .. }));
@@ -149,9 +170,16 @@ fn test_union_all() {
 #[test]
 fn test_intersect() {
     let schema = users_orders_schema();
-    let rel = translate_sql("SELECT id FROM users INTERSECT SELECT id FROM admins", &schema).unwrap();
+    let rel = translate_sql(
+        "SELECT id FROM users INTERSECT SELECT id FROM admins",
+        &schema,
+    )
+    .unwrap();
     match &rel {
-        QedRelation::Distinct { input } => assert!(matches!(&**input, QedRelation::Intersect { .. }), "expected Distinct(Intersect), got {rel:?}"),
+        QedRelation::Distinct { input } => assert!(
+            matches!(&**input, QedRelation::Intersect { .. }),
+            "expected Distinct(Intersect), got {rel:?}"
+        ),
         _ => panic!("expected Distinct wrapping Intersect, got {rel:?}"),
     }
 }
@@ -161,7 +189,10 @@ fn test_except() {
     let schema = users_orders_schema();
     let rel = translate_sql("SELECT id FROM users EXCEPT SELECT id FROM admins", &schema).unwrap();
     match &rel {
-        QedRelation::Distinct { input } => assert!(matches!(&**input, QedRelation::Except { .. }), "expected Distinct(Except), got {rel:?}"),
+        QedRelation::Distinct { input } => assert!(
+            matches!(&**input, QedRelation::Except { .. }),
+            "expected Distinct(Except), got {rel:?}"
+        ),
         _ => panic!("expected Distinct wrapping Except, got {rel:?}"),
     }
 }
@@ -172,7 +203,8 @@ fn test_order_by() {
     let rel = translate_sql("SELECT * FROM users ORDER BY name", &schema).unwrap();
     match &rel {
         QedRelation::QOp { name, args, input } => {
-            assert_eq!(name, "Sort"); assert!(!args.is_empty());
+            assert_eq!(name, "Sort");
+            assert!(!args.is_empty());
             assert!(matches!(&**input, QedRelation::Scan { .. }));
         }
         _ => panic!("expected QOp(Sort), got {rel:?}"),
@@ -195,7 +227,10 @@ fn test_unsupported_statement() {
     let (stmts, _) = ogsql_parser::Parser::parse_sql("CREATE TABLE t (id INTEGER)");
     let stmts: Vec<_> = stmts.into_iter().map(|si| si.statement).collect();
     let result = AstTranslator::new(&schema).translate(&stmts[0]);
-    assert!(matches!(result, Err(TranslateError::UnsupportedStatement(_))));
+    assert!(matches!(
+        result,
+        Err(TranslateError::UnsupportedStatement(_))
+    ));
 }
 
 #[test]
@@ -205,7 +240,10 @@ fn test_qualified_column_ref() {
     match &rel {
         QedRelation::Project { input, .. } => {
             assert!(matches!(&**input, QedRelation::Filter { .. }));
-            let filter = match input.as_ref() { QedRelation::Filter { condition, .. } => condition, _ => unreachable!() };
+            let filter = match input.as_ref() {
+                QedRelation::Filter { condition, .. } => condition,
+                _ => unreachable!(),
+            };
             assert!(matches!(filter, QedExpr::BinOp { op, .. } if op == "eq"));
         }
         _ => panic!("expected Filter, got {rel:?}"),
@@ -217,8 +255,9 @@ fn test_between() {
     let schema = users_orders_schema();
     let rel = translate_sql("SELECT * FROM users WHERE id BETWEEN 1 AND 10", &schema).unwrap();
     match &rel {
-        QedRelation::Filter { condition, .. } =>
-            assert!(matches!(condition, QedExpr::BinOp { op, .. } if op == "and")),
+        QedRelation::Filter { condition, .. } => {
+            assert!(matches!(condition, QedExpr::BinOp { op, .. } if op == "and"))
+        }
         _ => panic!("expected Filter, got {rel:?}"),
     }
 }
@@ -228,8 +267,9 @@ fn test_in_list() {
     let schema = users_orders_schema();
     let rel = translate_sql("SELECT * FROM users WHERE id IN (1, 2, 3)", &schema).unwrap();
     match &rel {
-        QedRelation::Filter { condition, .. } =>
-            assert!(matches!(condition, QedExpr::BinOp { op, .. } if op == "or")),
+        QedRelation::Filter { condition, .. } => {
+            assert!(matches!(condition, QedExpr::BinOp { op, .. } if op == "or"))
+        }
         _ => panic!("expected Filter, got {rel:?}"),
     }
 }
@@ -238,7 +278,10 @@ fn test_in_list() {
 fn test_subquery_in_from() {
     let schema = users_orders_schema();
     let rel = translate_sql("SELECT name FROM (SELECT id, name FROM users) sub", &schema).unwrap();
-    assert!(matches!(rel, QedRelation::Project { .. }), "expected Project, got {rel:?}");
+    assert!(
+        matches!(rel, QedRelation::Project { .. }),
+        "expected Project, got {rel:?}"
+    );
 }
 
 #[test]
@@ -246,15 +289,14 @@ fn test_count_with_expr() {
     let schema = users_orders_schema();
     let rel = translate_sql("SELECT id, COUNT(name) FROM users GROUP BY id", &schema).unwrap();
     match &rel {
-        QedRelation::Project { input, .. } => {
-            match input.as_ref() {
-                QedRelation::Aggregate { aggs, .. } => {
-                    assert_eq!(aggs.len(), 1); assert_eq!(aggs[0].func, "count");
-                    assert!(matches!(aggs[0].arg, QedAggArg::Expr(_)));
-                }
-                _ => panic!("expected Aggregate inside Project, got {input:?}"),
+        QedRelation::Project { input, .. } => match input.as_ref() {
+            QedRelation::Aggregate { aggs, .. } => {
+                assert_eq!(aggs.len(), 1);
+                assert_eq!(aggs[0].func, "count");
+                assert!(matches!(aggs[0].arg, QedAggArg::Expr(_)));
             }
-        }
+            _ => panic!("expected Aggregate inside Project, got {input:?}"),
+        },
         _ => panic!("expected Aggregate, got {rel:?}"),
     }
 }
@@ -264,7 +306,11 @@ fn test_multiple_from_cross_join() {
     let schema = users_orders_schema();
     let rel = translate_sql("SELECT * FROM users, orders", &schema).unwrap();
     match &rel {
-        QedRelation::Join { left, right, condition } => {
+        QedRelation::Join {
+            left,
+            right,
+            condition,
+        } => {
             assert!(matches!(&**left, QedRelation::Scan { .. }));
             assert!(matches!(&**right, QedRelation::Scan { .. }));
             assert!(condition.is_none());
@@ -276,10 +322,16 @@ fn test_multiple_from_cross_join() {
 #[test]
 fn test_join_no_alias() {
     let schema = users_orders_schema();
-    let result = translate_sql("SELECT id FROM users JOIN orders ON users.id = orders.user_id", &schema);
+    let result = translate_sql(
+        "SELECT id FROM users JOIN orders ON users.id = orders.user_id",
+        &schema,
+    );
     match &result {
         Ok(QedRelation::Project { input, .. }) => {
-            assert!(matches!(input.as_ref(), QedRelation::Join { .. }), "expected Join inside Project, got: {input:?}");
+            assert!(
+                matches!(input.as_ref(), QedRelation::Join { .. }),
+                "expected Join inside Project, got: {input:?}"
+            );
         }
         _ => panic!("expected Ok(Project with Join), got: {:?}", result),
     }

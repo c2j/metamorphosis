@@ -34,8 +34,13 @@ pub fn run_verify(
     let rewritten_stmt = parse_single_query(&rewritten_sql, &rewritten);
 
     let config = ProverConfig::default();
-    let result = match verify_rewrite("cli-verify", &original_stmt, &rewritten_stmt, &schema, &config)
-    {
+    let result = match verify_rewrite(
+        "cli-verify",
+        &original_stmt,
+        &rewritten_stmt,
+        &schema,
+        &config,
+    ) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: verification failed: {e}");
@@ -275,14 +280,26 @@ fn print_text(result: &VerificationResult) {
             match (&result.original_columns, &result.rewritten_columns) {
                 (Some(orig), Some(rew)) => {
                     if orig.len() != rew.len() {
-                        println!("  Column count: {} (original) vs {} (rewritten)", orig.len(), rew.len());
+                        println!(
+                            "  Column count: {} (original) vs {} (rewritten)",
+                            orig.len(),
+                            rew.len()
+                        );
                         if orig.len() > rew.len() {
-                            let missing: Vec<&str> = orig.iter().filter(|c| !rew.contains(c)).map(|s| s.as_str()).collect();
+                            let missing: Vec<&str> = orig
+                                .iter()
+                                .filter(|c| !rew.contains(c))
+                                .map(|s| s.as_str())
+                                .collect();
                             if !missing.is_empty() {
                                 println!("  Missing from rewrite: {}", missing.join(", "));
                             }
                         } else {
-                            let extra: Vec<&str> = rew.iter().filter(|c| !orig.contains(c)).map(|s| s.as_str()).collect();
+                            let extra: Vec<&str> = rew
+                                .iter()
+                                .filter(|c| !orig.contains(c))
+                                .map(|s| s.as_str())
+                                .collect();
                             if !extra.is_empty() {
                                 println!("  Extra columns in rewrite: {}", extra.join(", "));
                             }
@@ -344,5 +361,8 @@ fn print_json(result: &VerificationResult) {
         obj["rewritten_columns"] = serde_json::json!(rew);
     }
 
-    println!("{}", serde_json::to_string_pretty(&obj).expect("JSON serialization failed"));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&obj).expect("JSON serialization failed")
+    );
 }

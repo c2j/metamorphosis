@@ -1,0 +1,211 @@
+name: Build & Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: metamorphosis
+
+jobs:
+  build-linux-x86_64:
+    name: Build linux-x86_64 (glibc ≥ 2.31)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies (cmake for z3-sys)
+        run: sudo apt-get update && sudo apt-get install -y cmake libstdc++-12-dev
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: "0.13.0"
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+
+      - name: Build
+        run: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+
+      - name: Strip
+        run: strip --strip-unneeded target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
+
+      - name: Package
+        run: |
+          cd target/x86_64-unknown-linux-gnu/release
+          tar czf ../../../${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz ${{ env.BINARY_NAME }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-linux-x86_64
+          path: ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz
+
+  build-linux-arm64:
+    name: Build linux-arm64 (glibc ≥ 2.31)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install system dependencies (cmake for z3-sys)
+        run: sudo apt-get update && sudo apt-get install -y cmake libstdc++-12-dev binutils-aarch64-linux-gnu
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: "0.13.0"
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+
+      - name: Build
+        run: cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.31
+
+      - name: Strip
+        run: aarch64-linux-gnu-strip --strip-unneeded target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
+
+      - name: Package
+        run: |
+          cd target/aarch64-unknown-linux-gnu/release
+          tar czf ../../../${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-linux-arm64.tar.gz ${{ env.BINARY_NAME }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-linux-arm64
+          path: ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-linux-arm64.tar.gz
+
+  build-windows-x86_64:
+    name: Build windows-x86_64
+    runs-on: windows-2019
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: x86_64-pc-windows-gnu-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: x86_64-pc-windows-gnu-cargo-
+
+      - name: Build
+        run: cargo build --release --target x86_64-pc-windows-gnu
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+
+      - name: Strip
+        run: strip target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe
+        shell: bash
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe" `
+            -DestinationPath "${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-windows-x86_64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-windows-x86_64
+          path: ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-windows-x86_64.zip
+
+  release:
+    name: Create GitHub Release
+    needs: [build-linux-x86_64, build-linux-arm64, build-windows-x86_64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          # Artifacts are downloaded as ${name}/{filename}
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+          files: release-assets/*

@@ -195,10 +195,9 @@ fn is_safe_subquery(subquery: &SelectStatement) -> bool {
 
 /// Check whether any target is a scalar subquery `Expr::Subquery(...)`.
 fn has_scalar_subquery(targets: &[SelectTarget]) -> bool {
-    targets.iter().any(|t| match t {
-        SelectTarget::Expr(Expr::Subquery(_), _) => true,
-        _ => false,
-    })
+    targets
+        .iter()
+        .any(|t| matches!(t, SelectTarget::Expr(Expr::Subquery(_), _)))
 }
 
 // ── Rewrite Dispatch ──

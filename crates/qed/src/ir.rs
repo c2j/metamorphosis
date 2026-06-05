@@ -49,10 +49,7 @@ pub struct QedSchema {
 #[non_exhaustive]
 pub enum QedRelation {
     /// Full or partial table scan. Empty `fields` means all columns.
-    Scan {
-        table: String,
-        fields: Vec<usize>,
-    },
+    Scan { table: String, fields: Vec<usize> },
 
     /// Filter rows by a condition.
     Filter {
@@ -93,14 +90,10 @@ pub enum QedRelation {
     },
 
     /// Eliminate duplicate rows.
-    Distinct {
-        input: Box<QedRelation>,
-    },
+    Distinct { input: Box<QedRelation> },
 
     /// Inline value constructor (`VALUES (...)`).
-    Values {
-        rows: Vec<Vec<QedExpr>>,
-    },
+    Values { rows: Vec<Vec<QedExpr>> },
 
     /// Grouped aggregation.
     Aggregate {
@@ -139,10 +132,7 @@ pub enum QedExpr {
     },
 
     /// Unary operator: `"not"`, `"neg"`.
-    UnOp {
-        op: String,
-        expr: Box<QedExpr>,
-    },
+    UnOp { op: String, expr: Box<QedExpr> },
 
     /// Interpreted or uninterpreted function call.
     Function {
@@ -233,7 +223,10 @@ mod tests {
             input: Box::new(scan),
         };
         let project = QedRelation::Project {
-            exprs: vec![QedExpr::ColumnRef { index: 0 }, QedExpr::ColumnRef { index: 2 }],
+            exprs: vec![
+                QedExpr::ColumnRef { index: 0 },
+                QedExpr::ColumnRef { index: 2 },
+            ],
             input: Box::new(filter),
         };
 
@@ -327,7 +320,11 @@ mod tests {
     fn test_qed_schema_json_format() {
         let schema = QedSchema {
             name: "users".to_string(),
-            types: vec!["integer".to_string(), "varchar".to_string(), "boolean".to_string()],
+            types: vec![
+                "integer".to_string(),
+                "varchar".to_string(),
+                "boolean".to_string(),
+            ],
             key: vec![0],
             nullable: vec![false, false, true],
             guaranteed: vec!["id > 0".to_string()],
@@ -338,11 +335,17 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed["name"], "users");
-        assert_eq!(parsed["types"], serde_json::json!(["integer", "varchar", "boolean"]));
+        assert_eq!(
+            parsed["types"],
+            serde_json::json!(["integer", "varchar", "boolean"])
+        );
         assert_eq!(parsed["key"], serde_json::json!([0]));
         assert_eq!(parsed["nullable"], serde_json::json!([false, false, true]));
         assert_eq!(parsed["guaranteed"], serde_json::json!(["id > 0"]));
-        assert_eq!(parsed["fields"], serde_json::json!(["id", "name", "active"]));
+        assert_eq!(
+            parsed["fields"],
+            serde_json::json!(["id", "name", "active"])
+        );
     }
 
     #[test]
@@ -411,7 +414,9 @@ mod tests {
         let values = vec![
             QedValue::Integer { value: 42 },
             QedValue::Float { value: 3.14 },
-            QedValue::String { value: "hello".to_string() },
+            QedValue::String {
+                value: "hello".to_string(),
+            },
             QedValue::Boolean { value: true },
         ];
         for v in &values {

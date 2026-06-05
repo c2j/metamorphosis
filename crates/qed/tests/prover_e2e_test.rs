@@ -22,7 +22,11 @@ fn parse_ddl(sql: &str) -> Vec<Statement> {
 
 fn parse_single(sql: &str) -> Statement {
     let (stmts, _) = Parser::parse_sql(sql);
-    stmts.into_iter().next().expect("expected one statement").statement
+    stmts
+        .into_iter()
+        .next()
+        .expect("expected one statement")
+        .statement
 }
 
 fn test_schema_ddl() -> &'static str {
@@ -192,19 +196,24 @@ fn test_exists_to_join_is_provable() {
     );
     let schema = extract_rich_schema(&ddl);
 
-    let original = parse_single(
-        "SELECT order_id, user_id FROM orders o JOIN users u ON o.user_id = u.id",
-    );
-    let rewritten = parse_single(
-        "SELECT order_id, user_id FROM orders o JOIN users u ON o.user_id = u.id",
-    );
+    let original =
+        parse_single("SELECT order_id, user_id FROM orders o JOIN users u ON o.user_id = u.id");
+    let rewritten =
+        parse_single("SELECT order_id, user_id FROM orders o JOIN users u ON o.user_id = u.id");
 
-    let result = verify_rewrite("exists-to-join", &original, &rewritten, &schema, &prover_config());
+    let result = verify_rewrite(
+        "exists-to-join",
+        &original,
+        &rewritten,
+        &schema,
+        &prover_config(),
+    );
 
     match result {
         Ok(vr) => assert!(
             matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
-            "Expected Equivalent for EXISTS→JOIN, got: {:?}", vr.proof
+            "Expected Equivalent for EXISTS→JOIN, got: {:?}",
+            vr.proof
         ),
         Err(e) => panic!("Prover failed: {e}"),
     }
@@ -224,12 +233,19 @@ fn test_in_subquery_to_join_is_provable() {
         "SELECT order_id, user_id FROM orders o JOIN active_users a ON o.user_id = a.id",
     );
 
-    let result = verify_rewrite("in-to-join", &original, &rewritten, &schema, &prover_config());
+    let result = verify_rewrite(
+        "in-to-join",
+        &original,
+        &rewritten,
+        &schema,
+        &prover_config(),
+    );
 
     match result {
         Ok(vr) => assert!(
             matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
-            "Expected Equivalent for IN→JOIN, got: {:?}", vr.proof
+            "Expected Equivalent for IN→JOIN, got: {:?}",
+            vr.proof
         ),
         Err(e) => panic!("Prover failed: {e}"),
     }
@@ -249,12 +265,19 @@ fn test_not_exists_to_join_is_provable() {
         "SELECT order_id, user_id FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE u.id IS NULL",
     );
 
-    let result = verify_rewrite("not-exists-to-join", &original, &rewritten, &schema, &prover_config());
+    let result = verify_rewrite(
+        "not-exists-to-join",
+        &original,
+        &rewritten,
+        &schema,
+        &prover_config(),
+    );
 
     match result {
         Ok(vr) => assert!(
             matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
-            "Expected Equivalent for NOT EXISTS→JOIN, got: {:?}", vr.proof
+            "Expected Equivalent for NOT EXISTS→JOIN, got: {:?}",
+            vr.proof
         ),
         Err(e) => panic!("Prover failed: {e}"),
     }
@@ -274,12 +297,19 @@ fn test_not_in_to_join_is_provable() {
         "SELECT order_id, user_id FROM orders o LEFT JOIN active_users a ON o.user_id = a.id WHERE a.id IS NULL",
     );
 
-    let result = verify_rewrite("not-in-to-join", &original, &rewritten, &schema, &prover_config());
+    let result = verify_rewrite(
+        "not-in-to-join",
+        &original,
+        &rewritten,
+        &schema,
+        &prover_config(),
+    );
 
     match result {
         Ok(vr) => assert!(
             matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
-            "Expected Equivalent for NOT IN→JOIN, got: {:?}", vr.proof
+            "Expected Equivalent for NOT IN→JOIN, got: {:?}",
+            vr.proof
         ),
         Err(e) => panic!("Prover failed: {e}"),
     }

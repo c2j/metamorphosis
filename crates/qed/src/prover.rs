@@ -21,17 +21,11 @@ pub enum ProofResult {
     /// QED proved the two queries are semantically equivalent.
     Equivalent,
     /// QED found a counterexample (queries are NOT equivalent).
-    NotEquivalent {
-        counterexample: Option<String>,
-    },
+    NotEquivalent { counterexample: Option<String> },
     /// QED could not determine equivalence within the timeout.
-    Unknown {
-        reason: String,
-    },
+    Unknown { reason: String },
     /// The prover process timed out.
-    Timeout {
-        seconds: u64,
-    },
+    Timeout { seconds: u64 },
 }
 
 /// Configuration for the QED prover invocation.
@@ -107,15 +101,12 @@ pub fn run_prover(
     }
 
     // Fallback: external qed-prover binary
-    let name_map = schema_name_map
-        .cloned()
-        .unwrap_or_default();
+    let name_map = schema_name_map.cloned().unwrap_or_default();
     let prover_input = prover_compat::convert_input(input, &name_map);
     let json = serde_json::to_string_pretty(&prover_input)
         .map_err(|e| ProverError::Serialization(e.to_string()))?;
 
-    let temp_dir =
-        tempfile::tempdir().map_err(|e| ProverError::Io(e.to_string()))?;
+    let temp_dir = tempfile::tempdir().map_err(|e| ProverError::Io(e.to_string()))?;
     let input_path = temp_dir.path().join("input.json");
     std::fs::write(&input_path, &json).map_err(|e| ProverError::Io(e.to_string()))?;
 
@@ -140,11 +131,17 @@ pub fn run_prover(
                 // Take back ownership — wait_with_output consumes self
                 let taken = child_for_thread.lock().unwrap().take();
                 match taken {
-                    Some(c) => { let _ = tx.send(c.wait_with_output().map_err(|e| e.to_string())); }
-                    None => { let _ = tx.send(Err("child handle lost".to_string())); }
+                    Some(c) => {
+                        let _ = tx.send(c.wait_with_output().map_err(|e| e.to_string()));
+                    }
+                    None => {
+                        let _ = tx.send(Err("child handle lost".to_string()));
+                    }
                 }
             }
-            Err(e) => { let _ = tx.send(Err(e.to_string())); }
+            Err(e) => {
+                let _ = tx.send(Err(e.to_string()));
+            }
         }
     });
 
@@ -172,7 +169,9 @@ pub fn run_prover(
                         });
                     }
                     Err(_) => {
-                        tracing::warn!("Failed to parse .result file, falling back to stdout parsing");
+                        tracing::warn!(
+                            "Failed to parse .result file, falling back to stdout parsing"
+                        );
                     }
                 }
             }
@@ -187,7 +186,9 @@ pub fn run_prover(
                 }
             }
             let _ = handle.join();
-            Ok(ProofResult::Timeout { seconds: config.timeout_secs })
+            Ok(ProofResult::Timeout {
+                seconds: config.timeout_secs,
+            })
         }
     }
 }
@@ -224,8 +225,7 @@ fn parse_prover_output(output: &std::process::Output) -> Result<ProofResult, Pro
     let stdout_lower = stdout.to_lowercase();
 
     // Real prover format: "provable" / "not provable"
-    let is_provable =
-        stdout_lower.contains("provable") && !stdout_lower.contains("not provable");
+    let is_provable = stdout_lower.contains("provable") && !stdout_lower.contains("not provable");
     let is_not_provable = stdout_lower.contains("not provable");
 
     // Legacy format: "equivalent" / "not equivalent"
@@ -329,11 +329,7 @@ mod tests {
 
     #[test]
     fn test_parse_not_equivalent() {
-        let output = make_output(
-            "NotEquivalent\nCounterexample: { x = 1 }\n",
-            "",
-            0,
-        );
+        let output = make_output("NotEquivalent\nCounterexample: { x = 1 }\n", "", 0);
         let result = parse_prover_output(&output).unwrap();
         assert!(matches!(result, ProofResult::NotEquivalent { .. }));
         if let ProofResult::NotEquivalent { counterexample } = &result {

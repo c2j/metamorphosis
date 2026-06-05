@@ -84,7 +84,15 @@ fn main() {
             rules,
             procedure,
             from_procedure,
-        } => run_rewrite(file, version.as_deref(), schema, sql_dir, rules, procedure, from_procedure),
+        } => run_rewrite(
+            file,
+            version.as_deref(),
+            schema,
+            sql_dir,
+            rules,
+            procedure,
+            from_procedure,
+        ),
         Command::Suggest {
             file,
             version,
@@ -93,7 +101,15 @@ fn main() {
             output,
             procedure,
             from_procedure,
-        } => run_suggest(file, version.as_deref(), schema, sql_dir, &output, procedure, from_procedure),
+        } => run_suggest(
+            file,
+            version.as_deref(),
+            schema,
+            sql_dir,
+            &output,
+            procedure,
+            from_procedure,
+        ),
         Command::Verify {
             original,
             rewritten,
@@ -163,7 +179,9 @@ fn build_engine(rules_opt: Option<String>) -> RewriteEngine {
     RewriteEngine::new(registry)
 }
 
-fn load_procedure_variables(procedure: Option<PathBuf>) -> Option<std::collections::HashSet<String>> {
+fn load_procedure_variables(
+    procedure: Option<PathBuf>,
+) -> Option<std::collections::HashSet<String>> {
     let path = procedure?;
     let analysis = provenance::analyze_procedure_file(&path);
     if analysis.variables.is_empty() {
@@ -187,7 +205,14 @@ fn run_rewrite(
     if from_procedure {
         run_rewrite_from_procedure(&file, version, schema.as_ref(), &engine);
     } else {
-        run_rewrite_sql_file(&file, version, schema.as_ref(), &engine, procedure, sql_dir.as_ref());
+        run_rewrite_sql_file(
+            &file,
+            version,
+            schema.as_ref(),
+            &engine,
+            procedure,
+            sql_dir.as_ref(),
+        );
     }
 }
 
@@ -311,7 +336,13 @@ fn run_rewrite_sql_file(
     for (i, si) in stmt_infos.iter().enumerate() {
         let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
         let header = if prov_index.has_entries() {
-            provenance::format_stmtinfo_header_with_lookup(&prov_index, i + 1, si, Some(source_file_str), stmt_infos.len())
+            provenance::format_stmtinfo_header_with_lookup(
+                &prov_index,
+                i + 1,
+                si,
+                Some(source_file_str),
+                stmt_infos.len(),
+            )
         } else {
             provenance::format_stmtinfo_header(i + 1, si, Some(source_file_str), stmt_infos.len())
         };
@@ -335,9 +366,20 @@ fn run_rewrite_sql_file(
         if stmt_infos.len() > 1 {
             for (i, si) in stmt_infos.iter().enumerate() {
                 let header = if prov_index.has_entries() {
-                    provenance::format_stmtinfo_header_with_lookup(&prov_index, i + 1, si, Some(source_file_str), stmt_infos.len())
+                    provenance::format_stmtinfo_header_with_lookup(
+                        &prov_index,
+                        i + 1,
+                        si,
+                        Some(source_file_str),
+                        stmt_infos.len(),
+                    )
                 } else {
-                    provenance::format_stmtinfo_header(i + 1, si, Some(source_file_str), stmt_infos.len())
+                    provenance::format_stmtinfo_header(
+                        i + 1,
+                        si,
+                        Some(source_file_str),
+                        stmt_infos.len(),
+                    )
                 };
                 println!("{} no matching rule", header);
             }
@@ -360,7 +402,15 @@ fn run_suggest(
     if from_procedure {
         run_suggest_from_procedure(&file, version, schema.as_ref(), &engine, output);
     } else {
-        run_suggest_sql_file(&file, version, schema.as_ref(), &engine, output, procedure, sql_dir.as_ref());
+        run_suggest_sql_file(
+            &file,
+            version,
+            schema.as_ref(),
+            &engine,
+            output,
+            procedure,
+            sql_dir.as_ref(),
+        );
     }
 }
 
@@ -495,9 +545,20 @@ fn run_suggest_sql_file(
             for (i, si) in stmt_infos.iter().enumerate() {
                 let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
                 let header = if prov_index.has_entries() {
-                    provenance::format_stmtinfo_header_with_lookup(&prov_index, i + 1, si, Some(source_file_str), stmt_infos.len())
+                    provenance::format_stmtinfo_header_with_lookup(
+                        &prov_index,
+                        i + 1,
+                        si,
+                        Some(source_file_str),
+                        stmt_infos.len(),
+                    )
                 } else {
-                    provenance::format_stmtinfo_header(i + 1, si, Some(source_file_str), stmt_infos.len())
+                    provenance::format_stmtinfo_header(
+                        i + 1,
+                        si,
+                        Some(source_file_str),
+                        stmt_infos.len(),
+                    )
                 };
                 println!("{}", header);
 

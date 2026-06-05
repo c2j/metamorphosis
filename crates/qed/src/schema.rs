@@ -164,7 +164,10 @@ fn extract_table(stmt: &CreateTableStatement) -> TableInfo {
         apply_table_constraint(tc, &mut columns, &mut constraints);
     }
 
-    TableInfo { columns, constraints }
+    TableInfo {
+        columns,
+        constraints,
+    }
 }
 
 fn apply_column_constraint(
@@ -218,7 +221,9 @@ fn apply_table_constraint(
     constraints: &mut TableConstraints,
 ) {
     match tc {
-        TableConstraint::PrimaryKey { columns: pk_cols, .. } => {
+        TableConstraint::PrimaryKey {
+            columns: pk_cols, ..
+        } => {
             constraints.primary_key = pk_cols.iter().map(|s| s.to_lowercase()).collect();
             for pk_name in &constraints.primary_key {
                 if let Some(col) = columns.iter_mut().find(|c| c.name == *pk_name) {
@@ -227,7 +232,9 @@ fn apply_table_constraint(
                 }
             }
         }
-        TableConstraint::Unique { columns: u_cols, .. } => {
+        TableConstraint::Unique {
+            columns: u_cols, ..
+        } => {
             constraints
                 .unique
                 .push(u_cols.iter().map(|s| s.to_lowercase()).collect());
@@ -262,7 +269,10 @@ fn apply_table_constraint(
 }
 
 fn normalize_object_name(name: &ObjectName) -> String {
-    name.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>().join(".")
+    name.iter()
+        .map(|s| s.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 fn data_type_to_string(dt: &DataType) -> String {
@@ -378,9 +388,7 @@ mod tests {
 
     #[test]
     fn test_extract_not_null() {
-        let schema = parse_and_extract(
-            "CREATE TABLE items (id INTEGER NOT NULL, label TEXT)",
-        );
+        let schema = parse_and_extract("CREATE TABLE items (id INTEGER NOT NULL, label TEXT)");
         let items = &schema.tables["items"];
         assert!(!items.columns[0].nullable);
         assert!(items.columns[1].nullable);
@@ -396,14 +404,15 @@ mod tests {
         let accounts = &schema.tables["accounts"];
         assert!(accounts.columns[1].is_unique);
         assert!(accounts.columns[0].is_unique);
-        assert!(accounts.constraints.unique.contains(&vec!["email".to_string()]));
+        assert!(accounts
+            .constraints
+            .unique
+            .contains(&vec!["email".to_string()]));
     }
 
     #[test]
     fn test_extract_check() {
-        let schema = parse_and_extract(
-            "CREATE TABLE products (price NUMERIC CHECK (price > 0))",
-        );
+        let schema = parse_and_extract("CREATE TABLE products (price NUMERIC CHECK (price > 0))");
         let products = &schema.tables["products"];
         assert_eq!(products.constraints.check.len(), 1);
         assert!(products.constraints.check[0].expression.contains("price"));
@@ -424,9 +433,7 @@ mod tests {
 
     #[test]
     fn test_column_index_resolution() {
-        let schema = parse_and_extract(
-            "CREATE TABLE t (Alpha INTEGER, Beta TEXT, Gamma BOOLEAN)",
-        );
+        let schema = parse_and_extract("CREATE TABLE t (Alpha INTEGER, Beta TEXT, Gamma BOOLEAN)");
         let t = &schema.tables["t"];
         assert_eq!(t.column_index("alpha"), Some(0));
         assert_eq!(t.column_index("Beta"), Some(1));
@@ -436,11 +443,12 @@ mod tests {
 
     #[test]
     fn test_pk_implies_not_null() {
-        let schema = parse_and_extract(
-            "CREATE TABLE pk_test (a INTEGER, b TEXT, PRIMARY KEY (a))",
-        );
+        let schema = parse_and_extract("CREATE TABLE pk_test (a INTEGER, b TEXT, PRIMARY KEY (a))");
         let t = &schema.tables["pk_test"];
         assert!(!t.columns[0].nullable, "PK column 'a' must be NOT NULL");
-        assert!(t.columns[1].nullable, "non-PK column 'b' should remain nullable");
+        assert!(
+            t.columns[1].nullable,
+            "non-PK column 'b' should remain nullable"
+        );
     }
 }

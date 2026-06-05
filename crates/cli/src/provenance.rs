@@ -25,7 +25,11 @@ impl std::fmt::Display for SqlProvenance {
                 "{}:{} — line {}-{}",
                 self.source_file, proc, self.start_line, self.end_line
             ),
-            None => write!(f, "{} — line {}-{}", self.source_file, self.start_line, self.end_line),
+            None => write!(
+                f,
+                "{} — line {}-{}",
+                self.source_file, self.start_line, self.end_line
+            ),
         }
     }
 }
@@ -68,24 +72,14 @@ pub fn analyze_procedure_file(path: &Path) -> ProcedureAnalysis {
                 let proc_name = p.name.join(".");
                 collect_params_and_vars(&p.parameters, p.block.as_ref(), &mut variables);
                 if let Some(ref block) = p.block {
-                    extract_sql_from_block(
-                        block,
-                        &source_file,
-                        Some(&proc_name),
-                        &mut extracted,
-                    );
+                    extract_sql_from_block(block, &source_file, Some(&proc_name), &mut extracted);
                 }
             }
             Statement::CreateFunction(f) => {
                 let func_name = f.name.join(".");
                 collect_params_and_vars(&f.parameters, f.block.as_ref(), &mut variables);
                 if let Some(ref block) = f.block {
-                    extract_sql_from_block(
-                        block,
-                        &source_file,
-                        Some(&func_name),
-                        &mut extracted,
-                    );
+                    extract_sql_from_block(block, &source_file, Some(&func_name), &mut extracted);
                 }
             }
             Statement::CreatePackageBody(pkg) => {
@@ -98,7 +92,11 @@ pub fn analyze_procedure_file(path: &Path) -> ProcedureAnalysis {
     if variables.is_empty() {
         eprintln!("Warning: no variables found in '{}'", path.display());
     } else {
-        eprintln!("Extracted {} variable(s) from '{}'", variables.len(), path.display());
+        eprintln!(
+            "Extracted {} variable(s) from '{}'",
+            variables.len(),
+            path.display()
+        );
     }
 
     if extracted.is_empty() {
@@ -112,7 +110,10 @@ pub fn analyze_procedure_file(path: &Path) -> ProcedureAnalysis {
     }
 
     ProcedureAnalysis {
-        extracted_sql: extracted.into_iter().map(|e| (e.statement, e.provenance)).collect(),
+        extracted_sql: extracted
+            .into_iter()
+            .map(|e| (e.statement, e.provenance))
+            .collect(),
         variables,
     }
 }
@@ -129,24 +130,14 @@ fn extract_from_package(
                 let proc_name = p.name.join(".");
                 collect_params_and_vars(&p.parameters, p.block.as_ref(), variables);
                 if let Some(ref block) = p.block {
-                    extract_sql_from_block(
-                        block,
-                        source_file,
-                        Some(&proc_name),
-                        extracted,
-                    );
+                    extract_sql_from_block(block, source_file, Some(&proc_name), extracted);
                 }
             }
             PackageItem::Function(f) => {
                 let func_name = f.name.join(".");
                 collect_params_and_vars(&f.parameters, f.block.as_ref(), variables);
                 if let Some(ref block) = f.block {
-                    extract_sql_from_block(
-                        block,
-                        source_file,
-                        Some(&func_name),
-                        extracted,
-                    );
+                    extract_sql_from_block(block, source_file, Some(&func_name), extracted);
                 }
             }
             PackageItem::Variable(v) => {
@@ -288,12 +279,7 @@ fn extract_sql_from_pl_stmt(
         }
 
         PlStatement::Block(spanned_block) => {
-            extract_sql_from_block(
-                spanned_block,
-                source_file,
-                procedure_name,
-                results,
-            );
+            extract_sql_from_block(spanned_block, source_file, procedure_name, results);
         }
 
         PlStatement::If(spanned_if) => {
@@ -522,7 +508,11 @@ impl ProvenanceIndex {
             return index;
         }
 
-        eprintln!("Scanning {} file(s) in '{}' for procedure SQL...", files.len(), sql_dir.display());
+        eprintln!(
+            "Scanning {} file(s) in '{}' for procedure SQL...",
+            files.len(),
+            sql_dir.display()
+        );
 
         let mut total_sql = 0usize;
         for path in &files {
@@ -530,15 +520,19 @@ impl ProvenanceIndex {
             for (stmt, prov) in &analysis.extracted_sql {
                 let fp = fingerprint_statement(stmt);
                 let tables = collect_table_names(stmt);
-                index.by_fingerprint.entry(fp).or_default().push(IndexedSql {
-                    table_names: tables.clone(),
-                    provenance: SqlProvenance {
-                        source_file: prov.source_file.clone(),
-                        procedure_name: prov.procedure_name.clone(),
-                        start_line: prov.start_line,
-                        end_line: prov.end_line,
-                    },
-                });
+                index
+                    .by_fingerprint
+                    .entry(fp)
+                    .or_default()
+                    .push(IndexedSql {
+                        table_names: tables.clone(),
+                        provenance: SqlProvenance {
+                            source_file: prov.source_file.clone(),
+                            procedure_name: prov.procedure_name.clone(),
+                            start_line: prov.start_line,
+                            end_line: prov.end_line,
+                        },
+                    });
                 index.all_entries.push(IndexedSql {
                     table_names: tables,
                     provenance: SqlProvenance {
@@ -553,7 +547,11 @@ impl ProvenanceIndex {
         }
 
         if total_sql > 0 {
-            eprintln!("Indexed {} SQL statement(s) from {} procedure file(s)", total_sql, files.len());
+            eprintln!(
+                "Indexed {} SQL statement(s) from {} procedure file(s)",
+                total_sql,
+                files.len()
+            );
         }
 
         index
@@ -614,10 +612,12 @@ fn collect_sql_files(dir: &Path) -> Result<Vec<std::path::PathBuf>, String> {
 fn analyze_procedure_file_silent(path: &Path) -> ProcedureAnalysis {
     let sql = match std::fs::read_to_string(path) {
         Ok(s) => s,
-        Err(_) => return ProcedureAnalysis {
-            extracted_sql: Vec::new(),
-            variables: HashSet::new(),
-        },
+        Err(_) => {
+            return ProcedureAnalysis {
+                extracted_sql: Vec::new(),
+                variables: HashSet::new(),
+            }
+        }
     };
     let source_file = path
         .file_name()
@@ -653,7 +653,10 @@ fn analyze_procedure_file_silent(path: &Path) -> ProcedureAnalysis {
     }
 
     ProcedureAnalysis {
-        extracted_sql: extracted.into_iter().map(|e| (e.statement, e.provenance)).collect(),
+        extracted_sql: extracted
+            .into_iter()
+            .map(|e| (e.statement, e.provenance))
+            .collect(),
         variables,
     }
 }
@@ -670,7 +673,11 @@ fn collect_table_names(stmt: &Statement) -> HashSet<String> {
     match stmt {
         Statement::Select(sel) => collect_from_select(sel, &mut tables),
         Statement::Insert(ins) => {
-            let name = ins.table.last().map(|s| s.to_lowercase()).unwrap_or_default();
+            let name = ins
+                .table
+                .last()
+                .map(|s| s.to_lowercase())
+                .unwrap_or_default();
             if !name.is_empty() {
                 tables.insert(name);
             }

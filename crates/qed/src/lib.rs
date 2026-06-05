@@ -23,7 +23,10 @@ pub mod z3_solver;
 pub use ir::{QedAggArg, QedAggCall, QedExpr, QedInput, QedRelation, QedSchema, QedValue};
 
 pub use prover::{ProofResult, ProverConfig, ProverError};
-pub use prover_compat::{convert_input, convert_relation, convert_expr, ProverInput, ProverRelation, ProverExpr, ProverSchema, ProverDataType, ProverJoinKind, ProverAggCall, VL, map_data_type};
+pub use prover_compat::{
+    convert_expr, convert_input, convert_relation, map_data_type, ProverAggCall, ProverDataType,
+    ProverExpr, ProverInput, ProverJoinKind, ProverRelation, ProverSchema, VL,
+};
 
 pub use schema::{
     CheckConstraint, ColumnInfo, ForeignKeyInfo, ReferentialAction, RichSchema, TableConstraints,
