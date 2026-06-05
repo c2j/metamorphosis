@@ -248,7 +248,8 @@ impl<'a> AstTranslator<'a> {
         match tr {
             TableRef::Table { name, alias, .. } => {
                 let table_name = name.join(".");
-                let scope = ColumnScope::from_table(&table_name, alias.as_deref(), self.schema)?;
+                let implicit_alias = alias.as_deref().or_else(|| name.last().map(|s| s.as_str()));
+                let scope = ColumnScope::from_table(&table_name, implicit_alias, self.schema)?;
                 let rel = QedRelation::Scan { table: table_name.to_lowercase(), fields: vec![] };
                 Ok((rel, scope))
             }
@@ -270,8 +271,10 @@ impl<'a> AstTranslator<'a> {
 
     fn scope_for_table_ref(&self, tr: &TableRef) -> Result<ColumnScope, TranslateError> {
         match tr {
-            TableRef::Table { name, alias, .. } =>
-                ColumnScope::from_table(&name.join("."), alias.as_deref(), self.schema),
+            TableRef::Table { name, alias, .. } => {
+                let implicit_alias = alias.as_deref().or_else(|| name.last().map(|s| s.as_str()));
+                ColumnScope::from_table(&name.join("."), implicit_alias, self.schema)
+            }
             TableRef::Join { left, right, .. } =>
                 Ok(ColumnScope::join(self.scope_for_table_ref(left)?, self.scope_for_table_ref(right)?)),
             TableRef::Subquery { query, alias, .. } =>
