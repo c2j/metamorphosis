@@ -8,6 +8,7 @@ use ogsql_parser::{ParseOptions, Parser, StatementInfo};
 use std::path::{Path, PathBuf};
 
 mod provenance;
+mod verify_cmd;
 
 #[derive(ClapParser)]
 #[command(
@@ -54,6 +55,19 @@ enum Command {
         #[arg(long)]
         from_procedure: bool,
     },
+    /// Verify semantic equivalence of two SQL queries using Z3 SMT solver
+    Verify {
+        /// Original SQL file
+        original: PathBuf,
+        /// Rewritten SQL file
+        rewritten: PathBuf,
+        #[arg(long, conflicts_with = "sql_dir")]
+        schema: Option<PathBuf>,
+        #[arg(long, conflicts_with = "schema")]
+        sql_dir: Option<PathBuf>,
+        #[arg(short = 'o', long, default_value = "text")]
+        output: String,
+    },
 }
 
 fn main() {
@@ -80,6 +94,13 @@ fn main() {
             procedure,
             from_procedure,
         } => run_suggest(file, version.as_deref(), schema, sql_dir, &output, procedure, from_procedure),
+        Command::Verify {
+            original,
+            rewritten,
+            schema,
+            sql_dir,
+            output,
+        } => verify_cmd::run_verify(original, rewritten, schema, sql_dir, &output),
     }
 }
 
