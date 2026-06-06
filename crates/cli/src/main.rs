@@ -15,6 +15,7 @@ enum OutputFormat {
     Text,
     Json,
     Tsv,
+    Csv,
     /// Only output the generated probe SQL (one statement per entry, `;` terminated)
     #[clap(name = "sql-only")]
     SqlOnly,
@@ -26,6 +27,7 @@ impl std::fmt::Display for OutputFormat {
             OutputFormat::Text => write!(f, "text"),
             OutputFormat::Json => write!(f, "json"),
             OutputFormat::Tsv => write!(f, "tsv"),
+            OutputFormat::Csv => write!(f, "csv"),
             OutputFormat::SqlOnly => write!(f, "sql-only"),
         }
     }
@@ -505,6 +507,30 @@ fn run_suggest_from_procedure(
                 }
             }
         }
+        OutputFormat::Csv => {
+            let all_rule_ids: Vec<&str> = metamorphosis_rules::builtin_rules()
+                .iter()
+                .map(|r| r.id())
+                .collect();
+            let mut header = vec!["original_sql".to_string()];
+            header.extend(all_rule_ids.iter().map(|s| s.to_string()));
+            println!("{}", header.iter().map(|h| csv_escape(h)).collect::<Vec<_>>().join(","));
+            for (stmt, _prov) in items.iter() {
+                let result = engine.rewrite(&ctx, vec![stmt.clone()]);
+                let mut probes = std::collections::HashMap::new();
+                for s in &result.suggestions {
+                    if let RewriteAction::Generate { ref stmt, .. } = s.action {
+                        probes.insert(s.rule_id.as_str(), compress_sql(stmt));
+                    }
+                }
+                let original_sql = compress_sql(stmt);
+                let mut row = vec![csv_escape(&original_sql)];
+                for rid in &all_rule_ids {
+                    row.push(probes.get(*rid).map(|s| csv_escape(s)).unwrap_or_default());
+                }
+                println!("{}", row.join(","));
+            }
+        }
         OutputFormat::SqlOnly => {
             for (stmt, _prov) in items.iter() {
                 let result = engine.rewrite(&ctx, vec![stmt.clone()]);
@@ -541,6 +567,23 @@ fn color_for_confidence(c: &metamorphosis_core::Confidence) -> &'static str {
         Confidence::Low => RED,
         _ => DIM,
     }
+}
+
+fn csv_escape(s: &str) -> String {
+    let needs_quoting = s.contains(',') || s.contains('"') || s.contains('\n');
+    if needs_quoting {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+fn compress_sql(stmt: &ogsql_parser::ast::Statement) -> String {
+    SqlFormatter::new()
+        .pretty_print(false)
+        .format_statement(stmt)
+        .replace('\n', " ")
+        .replace('\t', " ")
 }
 
 fn print_text_suggestion(s: &metamorphosis_core::Suggestion) {
@@ -679,6 +722,30 @@ fn run_suggest_sql_file(
                 for s in &result.suggestions {
                     print_tsv_suggestion(s);
                 }
+            }
+        }
+        OutputFormat::Csv => {
+            let all_rule_ids: Vec<&str> = metamorphosis_rules::builtin_rules()
+                .iter()
+                .map(|r| r.id())
+                .collect();
+            let mut header = vec!["original_sql".to_string()];
+            header.extend(all_rule_ids.iter().map(|s| s.to_string()));
+            println!("{}", header.iter().map(|h| csv_escape(h)).collect::<Vec<_>>().join(","));
+            for si in stmt_infos.iter() {
+                let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
+                let mut probes = std::collections::HashMap::new();
+                for s in &result.suggestions {
+                    if let RewriteAction::Generate { ref stmt, .. } = s.action {
+                        probes.insert(s.rule_id.as_str(), compress_sql(stmt));
+                    }
+                }
+                let original_sql = si.sql_text.replace('\n', " ").replace('\t', " ");
+                let mut row = vec![csv_escape(&original_sql)];
+                for rid in &all_rule_ids {
+                    row.push(probes.get(*rid).map(|s| csv_escape(s)).unwrap_or_default());
+                }
+                println!("{}", row.join(","));
             }
         }
         OutputFormat::SqlOnly => {
