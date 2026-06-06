@@ -18,7 +18,7 @@ env:
 
 jobs:
   build-linux-x86_64:
-    name: Build linux-x86_64
+    name: Build linux-x86_64 (glibc ≥ 2.31)
     runs-on: ubuntu-22.04
 
     steps:
@@ -38,19 +38,37 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install system dependencies (cmake + libstdc++ for vendored z3-sys)
+      - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake libstdc++-12-dev
 
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: "0.13.0"
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+
       - name: Build
-        run: cargo build --release
+        run: |
+          mkdir -p .zig-wrappers
+          echo '#!/bin/sh' > .zig-wrappers/cc
+          echo 'exec zig cc --target=x86_64-linux-gnu.2.31 "$@"' >> .zig-wrappers/cc
+          echo '#!/bin/sh' > .zig-wrappers/c++
+          echo 'exec zig c++ --target=x86_64-linux-gnu.2.31 "$@"' >> .zig-wrappers/c++
+          chmod +x .zig-wrappers/cc .zig-wrappers/c++
+          export PATH="$(pwd)/.zig-wrappers:$PATH"
+          export CC="$(pwd)/.zig-wrappers/cc"
+          export CXX="$(pwd)/.zig-wrappers/c++"
+          cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
 
       - name: Strip
-        run: strip --strip-unneeded target/release/${{ env.BINARY_NAME }}
+        run: strip --strip-unneeded target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
 
       - name: Package
         run: |
-          cd target/release
-          tar czf ../../${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz ${{ env.BINARY_NAME }}
+          cd target/x86_64-unknown-linux-gnu/release
+          tar czf ../../../${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz ${{ env.BINARY_NAME }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
