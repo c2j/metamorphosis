@@ -1,7 +1,2 @@
-# macOS Homebrew Z3 linker path
-# On Linux (CI), apt install libz3-dev puts z3 in /usr/lib (default path)
-[target.aarch64-apple-darwin]
-rustflags = ["-L", "/opt/homebrew/lib"]
-
-[env]
-Z3_SYS_Z3_HEADER = "/opt/homebrew/include/z3.h"
+# Z3 is now vendored (statically linked) — no system Z3 paths needed.
+# cmake is required for building: brew install cmake (macOS) / apt install cmake (Linux)

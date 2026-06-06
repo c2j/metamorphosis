@@ -87,8 +87,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install system dependencies (cmake for z3-sys)
-        run: sudo apt-get update && sudo apt-get install -y cmake
+      - name: Install system dependencies (cmake + libstdc++ for vendored z3-sys)
+        run: sudo apt-get update && sudo apt-get install -y cmake libstdc++-12-dev
 
       - name: Build
         run: cargo build --release
