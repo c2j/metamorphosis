@@ -33,6 +33,29 @@ impl std::fmt::Display for OutputFormat {
     }
 }
 
+#[derive(ValueEnum, Clone, Debug, Default)]
+enum InputFormat {
+    #[default]
+    Sql,
+    Csv,
+}
+
+impl std::fmt::Display for InputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InputFormat::Sql => write!(f, "sql"),
+            InputFormat::Csv => write!(f, "csv"),
+        }
+    }
+}
+
+fn resolve_input_format(file: &Path, explicit: Option<InputFormat>) -> InputFormat {
+    explicit.unwrap_or_else(|| match file.extension().and_then(|e| e.to_str()) {
+        Some("csv") => InputFormat::Csv,
+        _ => InputFormat::Sql,
+    })
+}
+
 #[derive(ClapParser)]
 #[command(
     name = "metamorphosis",
@@ -61,6 +84,10 @@ enum Command {
         procedure: Option<PathBuf>,
         #[arg(long)]
         from_procedure: bool,
+        #[arg(long, value_name = "FORMAT")]
+        input_format: Option<InputFormat>,
+        #[arg(long)]
+        mybatis: bool,
     },
     /// Generate suggestions using Manual rules (never rewrites)
     Suggest {
@@ -77,6 +104,10 @@ enum Command {
         procedure: Option<PathBuf>,
         #[arg(long)]
         from_procedure: bool,
+        #[arg(long, value_name = "FORMAT")]
+        input_format: Option<InputFormat>,
+        #[arg(long)]
+        mybatis: bool,
     },
     /// Verify semantic equivalence of two SQL queries using Z3 SMT solver
     Verify {
@@ -107,6 +138,8 @@ fn main() {
             rules,
             procedure,
             from_procedure,
+            input_format,
+            mybatis,
         } => run_rewrite(
             file,
             version.as_deref(),
@@ -115,6 +148,8 @@ fn main() {
             rules,
             procedure,
             from_procedure,
+            input_format,
+            mybatis,
         ),
         Command::Suggest {
             file,
@@ -124,6 +159,8 @@ fn main() {
             output,
             procedure,
             from_procedure,
+            input_format,
+            mybatis,
         } => run_suggest(
             file,
             version.as_deref(),
@@ -132,6 +169,8 @@ fn main() {
             output,
             procedure,
             from_procedure,
+            input_format,
+            mybatis,
         ),
         Command::Verify {
             original,
@@ -148,6 +187,29 @@ fn load_sql(file: &Path) -> String {
         eprintln!("Error: cannot read '{}': {}", file.display(), e);
         std::process::exit(1);
     })
+}
+
+/// Load SQL statements from a CSV file where each line is one SQL statement.
+/// Returns (1-based line number, sql text) pairs, skipping empty and comment lines.
+fn load_csv_sql(file: &Path) -> Vec<(usize, String)> {
+    let content = std::fs::read_to_string(file).unwrap_or_else(|e| {
+        eprintln!("Error: cannot read '{}': {}", file.display(), e);
+        std::process::exit(1);
+    });
+
+    // Strip UTF-8 BOM if present (common in Windows-exported CSVs)
+    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
+
+    content
+        .lines()
+        .enumerate()
+        .map(|(i, line)| (i + 1, line))
+        .filter(|(_, line)| {
+            let trimmed = line.trim();
+            !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with("--")
+        })
+        .map(|(n, line)| (n, line.to_string()))
+        .collect()
 }
 
 fn load_schema(schema_path: Option<PathBuf>, sql_dir: Option<PathBuf>) -> Option<SchemaMap> {
@@ -213,6 +275,7 @@ fn load_procedure_variables(
     Some(analysis.variables)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_rewrite(
     file: PathBuf,
     version: Option<&str>,
@@ -221,6 +284,8 @@ fn run_rewrite(
     rules: Option<String>,
     procedure: Option<PathBuf>,
     from_procedure: bool,
+    input_format: Option<InputFormat>,
+    mybatis: bool,
 ) {
     let schema = load_schema(schema_path, sql_dir.clone());
     let engine = build_engine(rules);
@@ -228,14 +293,21 @@ fn run_rewrite(
     if from_procedure {
         run_rewrite_from_procedure(&file, version, schema.as_ref(), &engine);
     } else {
-        run_rewrite_sql_file(
-            &file,
-            version,
-            schema.as_ref(),
-            &engine,
-            procedure,
-            sql_dir.as_ref(),
-        );
+        let fmt = resolve_input_format(&file, input_format);
+        match fmt {
+            InputFormat::Csv => {
+                run_rewrite_csv_file(&file, version, schema.as_ref(), &engine, procedure, mybatis)
+            }
+            InputFormat::Sql => run_rewrite_sql_file(
+                &file,
+                version,
+                schema.as_ref(),
+                &engine,
+                procedure,
+                sql_dir.as_ref(),
+                mybatis,
+            ),
+        }
     }
 }
 
@@ -317,6 +389,7 @@ fn run_rewrite_sql_file(
     engine: &RewriteEngine,
     procedure: Option<PathBuf>,
     sql_dir: Option<&PathBuf>,
+    mybatis: bool,
 ) {
     let sql = load_sql(file);
     let known_variables = load_procedure_variables(procedure);
@@ -338,7 +411,7 @@ fn run_rewrite_sql_file(
         &sql,
         ParseOptions {
             preserve_comments: false,
-            mybatis_params: false,
+            mybatis_params: mybatis,
         },
     );
 
@@ -410,6 +483,101 @@ fn run_rewrite_sql_file(
     }
 }
 
+fn run_rewrite_csv_file(
+    file: &Path,
+    version: Option<&str>,
+    schema: Option<&SchemaMap>,
+    engine: &RewriteEngine,
+    procedure: Option<PathBuf>,
+    mybatis: bool,
+) {
+    let csv_lines = load_csv_sql(file);
+    if csv_lines.is_empty() {
+        println!("-- No statements to process");
+        return;
+    }
+
+    let known_variables = load_procedure_variables(procedure);
+    let config = RewriteConfig::default();
+    let ctx = RewriteContext {
+        version,
+        schema,
+        config: &config,
+        source_file: Some(file.to_str().unwrap_or("unknown")),
+        known_variables: known_variables.as_ref(),
+    };
+
+    let source_file_str = file.to_str().unwrap_or("unknown");
+
+    let mut parsed: Vec<(usize, StatementInfo)> = Vec::new();
+    for (line_num, sql) in &csv_lines {
+        let parse_output = Parser::parse_sql_with_options(
+            sql,
+            ParseOptions {
+                preserve_comments: false,
+                mybatis_params: mybatis,
+            },
+        );
+        for err in &parse_output.errors {
+            eprintln!("CSV line {}: parse warning: {:?}", line_num, err);
+        }
+        if let Some(si) = parse_output.statements.into_iter().next() {
+            parsed.push((*line_num, si));
+        }
+    }
+
+    if parsed.is_empty() {
+        println!("-- No valid statements after parsing CSV");
+        return;
+    }
+
+    let mut any_rewritten = false;
+    for (line_num, si) in &parsed {
+        let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
+        let header = provenance::format_provenance_header(
+            *line_num,
+            provenance::stmt_type_label(&si.statement),
+            Some(source_file_str),
+            None,
+            *line_num,
+            *line_num,
+            parsed.len(),
+        );
+
+        if result.changed {
+            any_rewritten = true;
+            println!("{}", header);
+            for rewritten in &result.statements {
+                println!(
+                    "{};",
+                    SqlFormatter::new()
+                        .pretty_print(true)
+                        .format_statement(rewritten)
+                );
+            }
+        }
+    }
+
+    if !any_rewritten {
+        println!("-- No rewrites applied");
+        if parsed.len() > 1 {
+            for (line_num, si) in &parsed {
+                let header = provenance::format_provenance_header(
+                    *line_num,
+                    provenance::stmt_type_label(&si.statement),
+                    Some(source_file_str),
+                    None,
+                    *line_num,
+                    *line_num,
+                    parsed.len(),
+                );
+                println!("{} no matching rule", header);
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_suggest(
     file: PathBuf,
     version: Option<&str>,
@@ -418,6 +586,8 @@ fn run_suggest(
     output: OutputFormat,
     procedure: Option<PathBuf>,
     from_procedure: bool,
+    input_format: Option<InputFormat>,
+    mybatis: bool,
 ) {
     let schema = load_schema(schema_path, sql_dir.clone());
     let engine = build_engine(None);
@@ -425,15 +595,30 @@ fn run_suggest(
     if from_procedure {
         run_suggest_from_procedure(&file, version, schema.as_ref(), &engine, output);
     } else {
-        run_suggest_sql_file(
-            &file,
-            version,
-            schema.as_ref(),
-            &engine,
-            output,
-            procedure,
-            sql_dir.as_ref(),
-        );
+        let fmt = resolve_input_format(&file, input_format);
+        match fmt {
+            InputFormat::Csv => {
+                run_suggest_csv_file(
+                    &file,
+                    version,
+                    schema.as_ref(),
+                    &engine,
+                    output,
+                    procedure,
+                    mybatis,
+                )
+            }
+            InputFormat::Sql => run_suggest_sql_file(
+                &file,
+                version,
+                schema.as_ref(),
+                &engine,
+                output,
+                procedure,
+                sql_dir.as_ref(),
+                mybatis,
+            ),
+        }
     }
 }
 
@@ -514,7 +699,14 @@ fn run_suggest_from_procedure(
                 .collect();
             let mut header = vec!["original_sql".to_string()];
             header.extend(all_rule_ids.iter().map(|s| s.to_string()));
-            println!("{}", header.iter().map(|h| csv_escape(h)).collect::<Vec<_>>().join(","));
+            println!(
+                "{}",
+                header
+                    .iter()
+                    .map(|h| csv_escape(h))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
             for (stmt, _prov) in items.iter() {
                 let result = engine.rewrite(&ctx, vec![stmt.clone()]);
                 let mut probes = std::collections::HashMap::new();
@@ -582,8 +774,7 @@ fn compress_sql(stmt: &ogsql_parser::ast::Statement) -> String {
     SqlFormatter::new()
         .pretty_print(false)
         .format_statement(stmt)
-        .replace('\n', " ")
-        .replace('\t', " ")
+        .replace(['\n', '\t'], " ")
 }
 
 fn print_text_suggestion(s: &metamorphosis_core::Suggestion) {
@@ -596,7 +787,12 @@ fn print_text_suggestion(s: &metamorphosis_core::Suggestion) {
         let conf_color = color_for_confidence(confidence);
         println!(
             "{}[{}]{}  {}{:?}{}",
-            ansi(BOLD), s.rule_id, ansi(RESET), ansi(conf_color), confidence, ansi(RESET)
+            ansi(BOLD),
+            s.rule_id,
+            ansi(RESET),
+            ansi(conf_color),
+            confidence,
+            ansi(RESET)
         );
         println!("{}  {}{}", ansi(DIM), s.rule_description, ansi(RESET));
         println!("{}  ────────── PROBE ──────────{}", ansi(DIM), ansi(RESET));
@@ -623,7 +819,10 @@ fn print_tsv_suggestion(s: &metamorphosis_core::Suggestion) {
             .pretty_print(false)
             .format_statement(stmt);
         let sql_oneline = sql.replace('\n', " ");
-        println!("{}\t{}\t{}\t{};", s.rule_id, confidence_str, purpose, sql_oneline);
+        println!(
+            "{}\t{}\t{}\t{};",
+            s.rule_id, confidence_str, purpose, sql_oneline
+        );
     }
 }
 
@@ -639,6 +838,7 @@ fn print_sql_only_suggestion(s: &metamorphosis_core::Suggestion) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_suggest_sql_file(
     file: &Path,
     version: Option<&str>,
@@ -647,6 +847,7 @@ fn run_suggest_sql_file(
     output: OutputFormat,
     procedure: Option<PathBuf>,
     sql_dir: Option<&PathBuf>,
+    mybatis: bool,
 ) {
     let sql = load_sql(file);
     let known_variables = load_procedure_variables(procedure);
@@ -664,7 +865,13 @@ fn run_suggest_sql_file(
         known_variables: known_variables.as_ref(),
     };
 
-    let parse_output = Parser::parse_sql_with_options(&sql, ParseOptions::default());
+    let parse_output = Parser::parse_sql_with_options(
+        &sql,
+        ParseOptions {
+            preserve_comments: false,
+            mybatis_params: mybatis,
+        },
+    );
 
     if !parse_output.errors.is_empty() {
         for err in &parse_output.errors {
@@ -700,7 +907,12 @@ fn run_suggest_sql_file(
                         stmt_infos.len(),
                     )
                 } else {
-                    provenance::format_stmtinfo_header(i + 1, si, Some(source_file_str), stmt_infos.len())
+                    provenance::format_stmtinfo_header(
+                        i + 1,
+                        si,
+                        Some(source_file_str),
+                        stmt_infos.len(),
+                    )
                 };
                 println!("{}", header);
 
@@ -731,7 +943,14 @@ fn run_suggest_sql_file(
                 .collect();
             let mut header = vec!["original_sql".to_string()];
             header.extend(all_rule_ids.iter().map(|s| s.to_string()));
-            println!("{}", header.iter().map(|h| csv_escape(h)).collect::<Vec<_>>().join(","));
+            println!(
+                "{}",
+                header
+                    .iter()
+                    .map(|h| csv_escape(h))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
             for si in stmt_infos.iter() {
                 let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
                 let mut probes = std::collections::HashMap::new();
@@ -740,7 +959,7 @@ fn run_suggest_sql_file(
                         probes.insert(s.rule_id.as_str(), compress_sql(stmt));
                     }
                 }
-                let original_sql = si.sql_text.replace('\n', " ").replace('\t', " ");
+                let original_sql = si.sql_text.replace(['\n', '\t'], " ");
                 let mut row = vec![csv_escape(&original_sql)];
                 for rid in &all_rule_ids {
                     row.push(probes.get(*rid).map(|s| csv_escape(s)).unwrap_or_default());
@@ -750,6 +969,139 @@ fn run_suggest_sql_file(
         }
         OutputFormat::SqlOnly => {
             for si in stmt_infos.iter() {
+                let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
+                for s in &result.suggestions {
+                    print_sql_only_suggestion(s);
+                }
+            }
+        }
+    }
+}
+
+fn run_suggest_csv_file(
+    file: &Path,
+    version: Option<&str>,
+    schema: Option<&SchemaMap>,
+    engine: &RewriteEngine,
+    output: OutputFormat,
+    procedure: Option<PathBuf>,
+    mybatis: bool,
+) {
+    let csv_lines = load_csv_sql(file);
+    if csv_lines.is_empty() {
+        println!("No statements to process.");
+        return;
+    }
+
+    let known_variables = load_procedure_variables(procedure);
+    let config = RewriteConfig::default();
+    let ctx = RewriteContext {
+        version,
+        schema,
+        config: &config,
+        source_file: Some(file.to_str().unwrap_or("unknown")),
+        known_variables: known_variables.as_ref(),
+    };
+
+    let source_file_str = file.to_str().unwrap_or("unknown");
+
+    let mut parsed: Vec<(usize, StatementInfo)> = Vec::new();
+    for (line_num, sql) in &csv_lines {
+        let parse_output = Parser::parse_sql_with_options(
+            sql,
+            ParseOptions {
+                preserve_comments: false,
+                mybatis_params: mybatis,
+            },
+        );
+        for err in &parse_output.errors {
+            eprintln!("CSV line {}: parse warning: {:?}", line_num, err);
+        }
+        if let Some(si) = parse_output.statements.into_iter().next() {
+            parsed.push((*line_num, si));
+        }
+    }
+
+    if parsed.is_empty() {
+        println!("No valid statements after parsing CSV.");
+        return;
+    }
+
+    match output {
+        OutputFormat::Json => {
+            let stmts: Vec<_> = parsed.iter().map(|(_, si)| si.statement.clone()).collect();
+            let result = engine.rewrite(&ctx, stmts);
+            let suggestions_json = serde_json::to_string_pretty(&result.suggestions)
+                .expect("Failed to serialize suggestions");
+            println!("{}", suggestions_json);
+        }
+        OutputFormat::Text => {
+            for (line_num, si) in &parsed {
+                let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
+                let header = provenance::format_provenance_header(
+                    *line_num,
+                    provenance::stmt_type_label(&si.statement),
+                    Some(source_file_str),
+                    None,
+                    *line_num,
+                    *line_num,
+                    parsed.len(),
+                );
+                println!("{}", header);
+
+                if !result.suggestions.is_empty() {
+                    for s in &result.suggestions {
+                        print_text_suggestion(s);
+                    }
+                } else {
+                    println!("Result: no matching rule");
+                }
+            }
+        }
+        OutputFormat::Tsv => {
+            for (i, (_, si)) in parsed.iter().enumerate() {
+                let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
+                if i > 0 && !result.suggestions.is_empty() {
+                    println!();
+                }
+                for s in &result.suggestions {
+                    print_tsv_suggestion(s);
+                }
+            }
+        }
+        OutputFormat::Csv => {
+            let all_rule_ids: Vec<&str> = metamorphosis_rules::builtin_rules()
+                .iter()
+                .map(|r| r.id())
+                .collect();
+            let mut header = vec!["original_sql".to_string()];
+            header.extend(all_rule_ids.iter().map(|s| s.to_string()));
+            println!(
+                "{}",
+                header
+                    .iter()
+                    .map(|h| csv_escape(h))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            for (_, si) in &parsed {
+                let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
+                let mut probes = std::collections::HashMap::new();
+                for s in &result.suggestions {
+                    if let RewriteAction::Generate { ref stmt, .. } = s.action {
+                        probes.insert(s.rule_id.as_str(), compress_sql(stmt));
+                    }
+                }
+                let original_sql = si.sql_text.replace(['\n', '\t'], " ");
+                let mut row = vec![csv_escape(&original_sql)];
+                for rid in &all_rule_ids {
+                    row.push(probes.get(*rid).map(|s| csv_escape(s)).unwrap_or_default());
+                }
+                println!("{}", row.join(","));
+            }
+        }
+        OutputFormat::SqlOnly => {
+            for (_, si) in &parsed {
                 let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
                 for s in &result.suggestions {
                     print_sql_only_suggestion(s);

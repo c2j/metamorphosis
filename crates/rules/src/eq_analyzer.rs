@@ -71,14 +71,14 @@ impl EqPredicateCollector {
 
     pub(crate) fn handle_equality(&mut self, left: &Expr, right: &Expr) {
         match (left, right) {
-            // Column = Parameter/MyBatisParam → tier1: parameterized filter (variable input)
-            (Expr::ColumnRef(name), Expr::Parameter(_) | Expr::MyBatisParam(_)) => {
+            // Column = Parameter/MyBatisParam/JdbcParam → tier1: parameterized filter (variable input)
+            (Expr::ColumnRef(name), Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::JdbcParam) => {
                 if let Some(col) = name.last() {
                     self.tier1.push(col.clone());
                 }
             }
-            // Parameter/MyBatisParam = Column → tier1
-            (Expr::Parameter(_) | Expr::MyBatisParam(_), Expr::ColumnRef(name)) => {
+            // Parameter/MyBatisParam/JdbcParam = Column → tier1
+            (Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::JdbcParam, Expr::ColumnRef(name)) => {
                 if let Some(col) = name.last() {
                     self.tier1.push(col.clone());
                 }
