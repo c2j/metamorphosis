@@ -516,23 +516,55 @@ fn run_suggest_from_procedure(
     }
 }
 
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const RED: &str = "\x1b[31m";
+const RESET: &str = "\x1b[0m";
+
+use std::io::IsTerminal;
+
+fn ansi(code: &str) -> &str {
+    if std::io::stdout().is_terminal() {
+        code
+    } else {
+        ""
+    }
+}
+
+fn color_for_confidence(c: &metamorphosis_core::Confidence) -> &'static str {
+    use metamorphosis_core::Confidence;
+    match c {
+        Confidence::High => GREEN,
+        Confidence::Medium => YELLOW,
+        Confidence::Low => RED,
+        _ => DIM,
+    }
+}
+
 fn print_text_suggestion(s: &metamorphosis_core::Suggestion) {
-    println!("Rule: {} — {}", s.rule_id, s.rule_description);
     if let RewriteAction::Generate {
         ref stmt,
-        ref purpose,
+        purpose: _,
         ref confidence,
     } = s.action
     {
-        println!("Purpose: {}", purpose);
-        println!("Confidence: {:?}", confidence);
-        println!("Probe SQL:");
+        let conf_color = color_for_confidence(confidence);
         println!(
-            "{};",
-            SqlFormatter::new()
-                .pretty_print(true)
-                .format_statement(stmt)
+            "{}[{}]{}  {}{:?}{}",
+            ansi(BOLD), s.rule_id, ansi(RESET), ansi(conf_color), confidence, ansi(RESET)
         );
+        println!("{}  {}{}", ansi(DIM), s.rule_description, ansi(RESET));
+        println!("{}  ────────── PROBE ──────────{}", ansi(DIM), ansi(RESET));
+        let sql = SqlFormatter::new()
+            .pretty_print(true)
+            .format_statement(stmt);
+        for line in sql.lines() {
+            println!("  {line}");
+        }
+        println!("{}  ────────────────────────────{}", ansi(DIM), ansi(RESET));
+        println!();
     }
 }
 
