@@ -1,4 +1,4 @@
-use clap::{Parser as ClapParser, Subcommand};
+use clap::{Parser as ClapParser, Subcommand, ValueEnum};
 use metamorphosis_core::extractor::extract_schema_from_dir;
 use metamorphosis_core::types::RewriteAction;
 use metamorphosis_core::{RewriteConfig, RewriteContext, RewriteEngine, RuleRegistry};
@@ -9,6 +9,27 @@ use std::path::{Path, PathBuf};
 
 mod provenance;
 mod verify_cmd;
+
+#[derive(ValueEnum, Clone, Debug)]
+enum OutputFormat {
+    Text,
+    Json,
+    Tsv,
+    /// Only output the generated probe SQL (one statement per entry, `;` terminated)
+    #[clap(name = "sql-only")]
+    SqlOnly,
+}
+
+impl std::fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputFormat::Text => write!(f, "text"),
+            OutputFormat::Json => write!(f, "json"),
+            OutputFormat::Tsv => write!(f, "tsv"),
+            OutputFormat::SqlOnly => write!(f, "sql-only"),
+        }
+    }
+}
 
 #[derive(ClapParser)]
 #[command(
@@ -48,8 +69,8 @@ enum Command {
         schema: Option<PathBuf>,
         #[arg(long, conflicts_with = "schema")]
         sql_dir: Option<PathBuf>,
-        #[arg(short = 'o', default_value = "text")]
-        output: String,
+        #[arg(short = 'o', default_value_t = OutputFormat::Text)]
+        output: OutputFormat,
         #[arg(long)]
         procedure: Option<PathBuf>,
         #[arg(long)]
@@ -106,7 +127,7 @@ fn main() {
             version.as_deref(),
             schema,
             sql_dir,
-            &output,
+            output,
             procedure,
             from_procedure,
         ),
@@ -392,7 +413,7 @@ fn run_suggest(
     version: Option<&str>,
     schema_path: Option<PathBuf>,
     sql_dir: Option<PathBuf>,
-    output: &str,
+    output: OutputFormat,
     procedure: Option<PathBuf>,
     from_procedure: bool,
 ) {
@@ -419,7 +440,7 @@ fn run_suggest_from_procedure(
     version: Option<&str>,
     schema: Option<&SchemaMap>,
     engine: &RewriteEngine,
-    output: &str,
+    output: OutputFormat,
 ) {
     let analysis = provenance::analyze_procedure_file(file);
     let config = RewriteConfig::default();
@@ -443,14 +464,14 @@ fn run_suggest_from_procedure(
     }
 
     match output {
-        "json" => {
+        OutputFormat::Json => {
             let stmts: Vec<_> = items.iter().map(|(s, _)| s.clone()).collect();
             let result = engine.rewrite(&ctx, stmts);
             let suggestions_json = serde_json::to_string_pretty(&result.suggestions)
                 .expect("Failed to serialize suggestions");
             println!("{}", suggestions_json);
         }
-        _ => {
+        OutputFormat::Text => {
             for (i, (stmt, prov)) in items.iter().enumerate() {
                 let result = engine.rewrite(&ctx, vec![stmt.clone()]);
                 let header = provenance::format_provenance_header(
@@ -466,29 +487,80 @@ fn run_suggest_from_procedure(
 
                 if !result.suggestions.is_empty() {
                     for s in &result.suggestions {
-                        println!("Rule: {} — {}", s.rule_id, s.rule_description);
-                        if let RewriteAction::Generate {
-                            ref stmt,
-                            ref purpose,
-                            ref confidence,
-                        } = s.action
-                        {
-                            println!("Purpose: {}", purpose);
-                            println!("Confidence: {:?}", confidence);
-                            println!("Probe SQL:");
-                            println!(
-                                "{};",
-                                SqlFormatter::new()
-                                    .pretty_print(true)
-                                    .format_statement(stmt)
-                            );
-                        }
+                        print_text_suggestion(s);
                     }
                 } else {
                     println!("Result: no matching rule");
                 }
             }
         }
+        OutputFormat::Tsv => {
+            for (i, (stmt, _prov)) in items.iter().enumerate() {
+                let result = engine.rewrite(&ctx, vec![stmt.clone()]);
+                if i > 0 && !result.suggestions.is_empty() {
+                    println!();
+                }
+                for s in &result.suggestions {
+                    print_tsv_suggestion(s);
+                }
+            }
+        }
+        OutputFormat::SqlOnly => {
+            for (stmt, _prov) in items.iter() {
+                let result = engine.rewrite(&ctx, vec![stmt.clone()]);
+                for s in &result.suggestions {
+                    print_sql_only_suggestion(s);
+                }
+            }
+        }
+    }
+}
+
+fn print_text_suggestion(s: &metamorphosis_core::Suggestion) {
+    println!("Rule: {} — {}", s.rule_id, s.rule_description);
+    if let RewriteAction::Generate {
+        ref stmt,
+        ref purpose,
+        ref confidence,
+    } = s.action
+    {
+        println!("Purpose: {}", purpose);
+        println!("Confidence: {:?}", confidence);
+        println!("Probe SQL:");
+        println!(
+            "{};",
+            SqlFormatter::new()
+                .pretty_print(true)
+                .format_statement(stmt)
+        );
+    }
+}
+
+fn print_tsv_suggestion(s: &metamorphosis_core::Suggestion) {
+    if let RewriteAction::Generate {
+        ref stmt,
+        ref purpose,
+        ref confidence,
+    } = s.action
+    {
+        let confidence_str = format!("{:?}", confidence);
+        let sql = SqlFormatter::new()
+            .pretty_print(false)
+            .format_statement(stmt);
+        let sql_oneline = sql.replace('\n', " ");
+        println!("{}\t{}\t{}\t{};", s.rule_id, confidence_str, purpose, sql_oneline);
+    }
+}
+
+fn print_sql_only_suggestion(s: &metamorphosis_core::Suggestion) {
+    if let RewriteAction::Generate { ref stmt, .. } = s.action {
+        println!(
+            "{};",
+            SqlFormatter::new()
+                .pretty_print(true)
+                .format_statement(stmt)
+        );
+        println!();
     }
 }
 
@@ -497,7 +569,7 @@ fn run_suggest_sql_file(
     version: Option<&str>,
     schema: Option<&SchemaMap>,
     engine: &RewriteEngine,
-    output: &str,
+    output: OutputFormat,
     procedure: Option<PathBuf>,
     sql_dir: Option<&PathBuf>,
 ) {
@@ -534,14 +606,14 @@ fn run_suggest_sql_file(
     let source_file_str = file.to_str().unwrap_or("unknown");
 
     match output {
-        "json" => {
+        OutputFormat::Json => {
             let stmts: Vec<_> = stmt_infos.iter().map(|si| si.statement.clone()).collect();
             let result = engine.rewrite(&ctx, stmts);
             let suggestions_json = serde_json::to_string_pretty(&result.suggestions)
                 .expect("Failed to serialize suggestions");
             println!("{}", suggestions_json);
         }
-        _ => {
+        OutputFormat::Text => {
             for (i, si) in stmt_infos.iter().enumerate() {
                 let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
                 let header = if prov_index.has_entries() {
@@ -553,37 +625,35 @@ fn run_suggest_sql_file(
                         stmt_infos.len(),
                     )
                 } else {
-                    provenance::format_stmtinfo_header(
-                        i + 1,
-                        si,
-                        Some(source_file_str),
-                        stmt_infos.len(),
-                    )
+                    provenance::format_stmtinfo_header(i + 1, si, Some(source_file_str), stmt_infos.len())
                 };
                 println!("{}", header);
 
                 if !result.suggestions.is_empty() {
                     for s in &result.suggestions {
-                        println!("Rule: {} — {}", s.rule_id, s.rule_description);
-                        if let RewriteAction::Generate {
-                            ref stmt,
-                            ref purpose,
-                            ref confidence,
-                        } = s.action
-                        {
-                            println!("Purpose: {}", purpose);
-                            println!("Confidence: {:?}", confidence);
-                            println!("Probe SQL:");
-                            println!(
-                                "{};",
-                                SqlFormatter::new()
-                                    .pretty_print(true)
-                                    .format_statement(stmt)
-                            );
-                        }
+                        print_text_suggestion(s);
                     }
                 } else {
                     println!("Result: no matching rule");
+                }
+            }
+        }
+        OutputFormat::Tsv => {
+            for (i, si) in stmt_infos.iter().enumerate() {
+                let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
+                if i > 0 && !result.suggestions.is_empty() {
+                    println!();
+                }
+                for s in &result.suggestions {
+                    print_tsv_suggestion(s);
+                }
+            }
+        }
+        OutputFormat::SqlOnly => {
+            for si in stmt_infos.iter() {
+                let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
+                for s in &result.suggestions {
+                    print_sql_only_suggestion(s);
                 }
             }
         }
