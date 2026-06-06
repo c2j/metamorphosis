@@ -98,7 +98,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake libstdc++-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake libstdc++-12-dev
 
       - name: Install Zig
         uses: mlugg/setup-zig@v1
