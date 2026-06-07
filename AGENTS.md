@@ -15,7 +15,7 @@ Layer 2: Individual rules (EliminateSelectStar, DetectDuplicateEqKeys, SubqueryT
 Layer 1: ogsql-parser (AST / Visitor / SchemaMap / Formatter)
 ```
 
-Workspace: `crates/core/` (engine + abstractions), `crates/rules/` (built-in rules), `crates/cli/` (CLI), `crates/qed/` (QED verification with embedded Z3).
+Workspace: `crates/core/` (engine + abstractions), `crates/rules/` (built-in rules), `crates/cli/` (CLI), `crates/qed/` (QED verification with embedded Z3), `crates/verieql/` (standalone SQL equivalence verifier via Z3).
 
 ## Key Design Constraints
 
@@ -40,6 +40,20 @@ These are **mandatory**, not suggestions:
 - **Naming**: No `get_` prefix on getters. `as_`/`to_`/`into_` by ownership semantics. Consistent word order project-wide.
 
 Full details: `docs/CONTRIBUTING.md` (mandatory) and `docs/BEST-PRATICE.md` (recommended).
+
+## CI Gates (MUST pass before merge)
+
+CI runs on every push via `.github/workflows/qed-verify.yml` with two jobs:
+
+1. **lint** — `cargo fmt --all -- --check`. **Every commit must be `rustfmt`-clean.** Run `cargo fmt --all` before committing. No exceptions.
+2. **test** — `cargo test --workspace`. All tests must pass.
+
+**Before pushing, always run:**
+
+```bash
+cargo fmt --all -- --check   # must exit 0
+cargo test --workspace       # must pass
+```
 
 ## Testing
 
