@@ -72,13 +72,8 @@ impl RewriteRule for DetectDuplicateEqKeys {
 
         let limit = ctx.config.probe_default_limit;
         let non_param = collector.non_param_exprs();
-        let probe = build_probe_statement(
-            from,
-            &collector.keep_exprs,
-            &non_param,
-            &group_cols,
-            limit,
-        );
+        let probe =
+            build_probe_statement(from, &collector.keep_exprs, &non_param, &group_cols, limit);
 
         debug!(
             rule_id = self.id(),

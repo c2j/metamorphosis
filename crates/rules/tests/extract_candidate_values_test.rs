@@ -9,8 +9,7 @@ use std::collections::HashSet;
 use ogsql_parser::ParseOptions;
 
 fn test_suggest(sql: &str) -> (Vec<Statement>, Vec<Suggestion>) {
-    let engine =
-        RewriteEngine::new(RuleRegistry::new(vec![Box::new(ExtractCandidateValues)]));
+    let engine = RewriteEngine::new(RuleRegistry::new(vec![Box::new(ExtractCandidateValues)]));
     let config = RewriteConfig::default();
     let ctx = RewriteContext {
         version: None,
@@ -31,8 +30,7 @@ fn test_suggest_with_vars(
     sql: &str,
     known_variables: HashSet<String>,
 ) -> (Vec<Statement>, Vec<Suggestion>) {
-    let engine =
-        RewriteEngine::new(RuleRegistry::new(vec![Box::new(ExtractCandidateValues)]));
+    let engine = RewriteEngine::new(RuleRegistry::new(vec![Box::new(ExtractCandidateValues)]));
     let config = RewriteConfig::default();
     let ctx = RewriteContext {
         version: None,
@@ -50,8 +48,7 @@ fn test_suggest_with_vars(
 }
 
 fn test_suggest_mybatis(sql: &str) -> (Vec<Statement>, Vec<Suggestion>) {
-    let engine =
-        RewriteEngine::new(RuleRegistry::new(vec![Box::new(ExtractCandidateValues)]));
+    let engine = RewriteEngine::new(RuleRegistry::new(vec![Box::new(ExtractCandidateValues)]));
     let config = RewriteConfig::default();
     let ctx = RewriteContext {
         version: None,
@@ -80,9 +77,7 @@ fn test_suggest_mybatis(sql: &str) -> (Vec<Statement>, Vec<Suggestion>) {
 
 fn format_probe(suggestions: &[Suggestion]) -> Option<String> {
     suggestions.first().and_then(|s| match &s.action {
-        RewriteAction::Generate { stmt, .. } => {
-            Some(SqlFormatter::new().format_statement(stmt))
-        }
+        RewriteAction::Generate { stmt, .. } => Some(SqlFormatter::new().format_statement(stmt)),
         _ => None,
     })
 }
@@ -141,10 +136,7 @@ fn test_param_only_no_literal() {
         "SELECT status FROM t_payments WHERE order_id = p_order_id",
         vars,
     );
-    assert!(
-        !suggestions.is_empty(),
-        "Rule should match single param eq"
-    );
+    assert!(!suggestions.is_empty(), "Rule should match single param eq");
 
     let probe = format_probe(&suggestions).expect("Expected Generate action");
     assert!(
@@ -162,13 +154,9 @@ fn test_param_only_no_literal() {
 
 #[test]
 fn test_mybatis_param() {
-    let (_statements, suggestions) = test_suggest_mybatis(
-        "SELECT name FROM users WHERE users.status = #{status}",
-    );
-    assert!(
-        !suggestions.is_empty(),
-        "Rule should match MyBatisParam eq"
-    );
+    let (_statements, suggestions) =
+        test_suggest_mybatis("SELECT name FROM users WHERE users.status = #{status}");
+    assert!(!suggestions.is_empty(), "Rule should match MyBatisParam eq");
     let probe = format_probe(&suggestions).expect("Expected Generate action");
     assert!(
         probe.contains("status"),
@@ -206,9 +194,8 @@ fn test_multiple_non_param_conditions() {
 
 #[test]
 fn test_param_with_is_null() {
-    let (_statements, suggestions) = test_suggest(
-        "SELECT * FROM t WHERE t.flag IS NULL AND t.task_status = p_status",
-    );
+    let (_statements, suggestions) =
+        test_suggest("SELECT * FROM t WHERE t.flag IS NULL AND t.task_status = p_status");
     assert!(!suggestions.is_empty());
 
     let probe = format_probe(&suggestions).expect("Expected Generate action");
@@ -275,9 +262,8 @@ fn test_unqualified_column() {
 
 #[test]
 fn test_multiple_params_group_by_composite() {
-    let (_statements, suggestions) = test_suggest(
-        "SELECT * FROM t WHERE t.col1 = v_a AND t.col2 = v_b",
-    );
+    let (_statements, suggestions) =
+        test_suggest("SELECT * FROM t WHERE t.col1 = v_a AND t.col2 = v_b");
     assert!(!suggestions.is_empty());
 
     let probe = format_probe(&suggestions).expect("Expected Generate action");
@@ -387,19 +373,13 @@ fn test_join_with_param() {
 #[test]
 fn test_no_where_no_match() {
     let (_statements, suggestions) = test_suggest("SELECT * FROM users");
-    assert!(
-        suggestions.is_empty(),
-        "No WHERE clause should not match"
-    );
+    assert!(suggestions.is_empty(), "No WHERE clause should not match");
 }
 
 #[test]
 fn test_only_literal_where_no_match() {
     let (_statements, suggestions) = test_suggest("SELECT * FROM users WHERE id = 1");
-    assert!(
-        suggestions.is_empty(),
-        "Only literal eq should not match"
-    );
+    assert!(suggestions.is_empty(), "Only literal eq should not match");
 }
 
 #[test]

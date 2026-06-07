@@ -4,8 +4,8 @@
 
 pub mod detect_duplicate_eq_keys;
 pub mod eliminate_select_star;
-pub mod extract_candidate_values;
 mod eq_analyzer;
+pub mod extract_candidate_values;
 pub mod subquery_to_join;
 
 use metamorphosis_core::RewriteRule;
