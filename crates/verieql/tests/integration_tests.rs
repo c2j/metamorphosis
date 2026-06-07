@@ -5,9 +5,18 @@ fn emp_schema() -> Vec<TableSchema> {
     vec![TableSchema {
         name: "EMP".into(),
         columns: vec![
-            ColumnDef { name: "ID".into(), col_type: ColumnType::Integer },
-            ColumnDef { name: "NAME".into(), col_type: ColumnType::Varchar },
-            ColumnDef { name: "DEPT".into(), col_type: ColumnType::Integer },
+            ColumnDef {
+                name: "ID".into(),
+                col_type: ColumnType::Integer,
+            },
+            ColumnDef {
+                name: "NAME".into(),
+                col_type: ColumnType::Varchar,
+            },
+            ColumnDef {
+                name: "DEPT".into(),
+                col_type: ColumnType::Integer,
+            },
         ],
     }]
 }
@@ -25,7 +34,8 @@ fn identical_queries_are_equivalent() {
         &no_constraints(),
         Bound(2),
         Semantics::Bag,
-    ).unwrap();
+    )
+    .unwrap();
 
     assert!(
         matches!(report.result, ProofResult::Equivalent),
@@ -43,7 +53,8 @@ fn trivially_equivalent_select_star() {
         &no_constraints(),
         Bound(2),
         Semantics::Bag,
-    ).unwrap();
+    )
+    .unwrap();
 
     assert!(
         matches!(report.result, ProofResult::Equivalent),
@@ -61,7 +72,8 @@ fn different_where_clauses_may_not_be_equivalent() {
         &no_constraints(),
         Bound(2),
         Semantics::Bag,
-    ).unwrap();
+    )
+    .unwrap();
 
     // These should NOT be equivalent — they produce different results
     assert!(
@@ -80,7 +92,8 @@ fn where_true_vs_no_where() {
         &no_constraints(),
         Bound(2),
         Semantics::Bag,
-    ).unwrap();
+    )
+    .unwrap();
 
     assert!(
         matches!(report.result, ProofResult::Equivalent),

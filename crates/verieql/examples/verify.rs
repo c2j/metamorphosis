@@ -1,4 +1,4 @@
-use metamorphosis_verieql::{VeriEql, types::*};
+use metamorphosis_verieql::{types::*, VeriEql};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -18,9 +18,18 @@ fn main() {
     let schema = vec![TableSchema {
         name: "EMP".into(),
         columns: vec![
-            ColumnDef { name: "ID".into(), col_type: ColumnType::Integer },
-            ColumnDef { name: "NAME".into(), col_type: ColumnType::Varchar },
-            ColumnDef { name: "DEPT".into(), col_type: ColumnType::Integer },
+            ColumnDef {
+                name: "ID".into(),
+                col_type: ColumnType::Integer,
+            },
+            ColumnDef {
+                name: "NAME".into(),
+                col_type: ColumnType::Varchar,
+            },
+            ColumnDef {
+                name: "DEPT".into(),
+                col_type: ColumnType::Integer,
+            },
         ],
     }];
 
@@ -29,10 +38,20 @@ fn main() {
     println!("Bound: {bound}");
     println!();
 
-    match VeriEql::verify(sql1, sql2, &schema, &serde_json::json!(null), Bound(bound), Semantics::Bag) {
+    match VeriEql::verify(
+        sql1,
+        sql2,
+        &schema,
+        &serde_json::json!(null),
+        Bound(bound),
+        Semantics::Bag,
+    ) {
         Ok(report) => {
             println!("Result: {:?}", report.result);
-            println!("Translate: {}ms, Solve: {}ms", report.translate_ms, report.solve_ms);
+            println!(
+                "Translate: {}ms, Solve: {}ms",
+                report.translate_ms, report.solve_ms
+            );
         }
         Err(e) => {
             eprintln!("Error: {e}");

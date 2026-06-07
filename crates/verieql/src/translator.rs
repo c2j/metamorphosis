@@ -1,6 +1,6 @@
 use ogsql_parser::ast::{
-    Expr as OExpr, JoinType as OJoinType, SelectStatement, SelectTarget, SetOperation,
-    Statement, TableRef, WhenClause,
+    Expr as OExpr, JoinType as OJoinType, SelectStatement, SelectTarget, SetOperation, Statement,
+    TableRef, WhenClause,
 };
 
 use crate::ir::*;
@@ -42,13 +42,17 @@ fn translate_select(s: &SelectStatement) -> Result<Relation, TranslateError> {
     rel = translate_targets(&s.targets, rel, s.distinct)?;
 
     if !s.order_by.is_empty() {
-        let items: Result<Vec<_>, _> = s.order_by.iter().map(|o| {
-            Ok(OrderByItem {
-                expr: translate_expr(&o.expr)?,
-                asc: o.asc.unwrap_or(true),
-                nulls_first: o.nulls_first,
+        let items: Result<Vec<_>, _> = s
+            .order_by
+            .iter()
+            .map(|o| {
+                Ok(OrderByItem {
+                    expr: translate_expr(&o.expr)?,
+                    asc: o.asc.unwrap_or(true),
+                    nulls_first: o.nulls_first,
+                })
             })
-        }).collect();
+            .collect();
         rel = Relation::OrderBy {
             input: Box::new(rel),
             items: items?,
@@ -171,7 +175,9 @@ fn translate_group_by(
         .iter()
         .map(|g| match g {
             ogsql_parser::ast::GroupByItem::Expr(e) => translate_expr(e),
-            _ => Err(TranslateError::UnsupportedExpr("GROUPING SETS/ROLLUP/CUBE".into())),
+            _ => Err(TranslateError::UnsupportedExpr(
+                "GROUPING SETS/ROLLUP/CUBE".into(),
+            )),
         })
         .collect();
 
@@ -285,7 +291,8 @@ fn translate_expr(expr: &OExpr) -> Result<Expr, TranslateError> {
             whens,
             else_expr,
         } => {
-            let op = operand.as_ref()
+            let op = operand
+                .as_ref()
                 .map(|e| translate_expr(e).map(Box::new))
                 .transpose()?;
             let ws: Result<Vec<(Expr, Expr)>, _> = whens
@@ -296,7 +303,8 @@ fn translate_expr(expr: &OExpr) -> Result<Expr, TranslateError> {
                     Ok((cond, result))
                 })
                 .collect();
-            let el = else_expr.as_ref()
+            let el = else_expr
+                .as_ref()
                 .map(|e| translate_expr(e).map(Box::new))
                 .transpose()?;
             Ok(Expr::Case {
@@ -305,7 +313,10 @@ fn translate_expr(expr: &OExpr) -> Result<Expr, TranslateError> {
                 else_expr: el,
             })
         }
-        OExpr::IsNull { expr: inner, negated } => Ok(Expr::IsNull {
+        OExpr::IsNull {
+            expr: inner,
+            negated,
+        } => Ok(Expr::IsNull {
             expr: Box::new(translate_expr(inner)?),
             negated: *negated,
         }),
@@ -384,7 +395,12 @@ fn is_aggregate_expr(expr: &OExpr) -> bool {
 
 fn extract_agg_func(expr: &OExpr) -> AggFunc {
     if let OExpr::FunctionCall { name, .. } = expr {
-        match name.last().map(|s| s.to_uppercase()).unwrap_or_default().as_str() {
+        match name
+            .last()
+            .map(|s| s.to_uppercase())
+            .unwrap_or_default()
+            .as_str()
+        {
             "COUNT" => AggFunc::Count,
             "SUM" => AggFunc::Sum,
             "AVG" => AggFunc::Avg,

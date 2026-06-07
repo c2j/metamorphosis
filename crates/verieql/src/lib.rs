@@ -10,14 +10,14 @@
 //! Zero dependencies on other metamorphosis crates (`core`, `rules`, `qed`,
 //! `cli`).
 
-pub mod types;
-pub mod ir;
-pub mod environment;
-pub mod translator;
-pub mod encoder;
-pub mod verifier;
 pub mod constraints;
 pub mod counterexample;
+pub mod encoder;
+pub mod environment;
+pub mod ir;
+pub mod translator;
+pub mod types;
+pub mod verifier;
 
 use std::time::Instant;
 
@@ -99,9 +99,8 @@ impl VeriEql {
             z3::SatResult::Sat => {
                 let model = env.solver.get_model();
                 let table_names: Vec<String> = schema.iter().map(|s| s.name.clone()).collect();
-                let ce = model.map(|m| {
-                    counterexample::extract_counterexample(&m, &env, &table_names)
-                });
+                let ce =
+                    model.map(|m| counterexample::extract_counterexample(&m, &env, &table_names));
                 types::ProofResult::NotEquivalent {
                     counterexample: ce.unwrap_or_else(|| types::Counterexample { tables: vec![] }),
                 }

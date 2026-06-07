@@ -28,7 +28,9 @@ fn apply_single(
     constraint: &serde_json::Value,
     _env: &mut Environment,
 ) -> Result<(), ConstraintError> {
-    let obj = constraint.as_object().ok_or(ConstraintError::InvalidFormat)?;
+    let obj = constraint
+        .as_object()
+        .ok_or(ConstraintError::InvalidFormat)?;
     // Constraints are applied during database creation for now.
     // Full implementation will parse PK, FK, NOT NULL, range constraints.
     let _ = obj;

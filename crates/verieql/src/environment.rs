@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use z3::ast::{Ast, Bool, Dynamic};
-use z3::{FuncDecl, Sort, Solver};
+use z3::{FuncDecl, Solver, Sort};
 
 use crate::types::{Bound, ColumnType, Semantics, TableSchema};
 
@@ -106,7 +106,8 @@ impl Environment {
         for _ in 0..self.bound_size {
             let tuple = self.declare_tuple();
             let args: Vec<&dyn Ast> = vec![&tuple];
-            let not_deleted = self.deleted_func
+            let not_deleted = self
+                .deleted_func
                 .apply(&args)
                 .as_bool()
                 .expect("DELETED must return bool")
