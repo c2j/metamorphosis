@@ -75,10 +75,16 @@ impl EqPredicateCollector {
 
     pub(crate) fn handle_equality(&mut self, left: &Expr, right: &Expr) {
         match (left, right) {
-            (Expr::ColumnRef(name), Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::JdbcParam) => {
+            (
+                Expr::ColumnRef(name),
+                Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::JdbcParam,
+            ) => {
                 self.tier1.push(name.clone());
             }
-            (Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::JdbcParam, Expr::ColumnRef(name)) => {
+            (
+                Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::JdbcParam,
+                Expr::ColumnRef(name),
+            ) => {
                 self.tier1.push(name.clone());
             }
             // Column = Literal → non_eq: hardcoded literal has no selectivity as candidate key
@@ -184,19 +190,15 @@ pub(crate) fn collect_from(expr: &Expr, col: &mut EqPredicateCollector) {
             col.has_subquery = true;
             col.non_eq.push(expr.clone());
         }
-        Expr::Parenthesized(inner) => {
-            match inner.as_ref() {
-                Expr::BinaryOp { left, op, right }
-                    if op.to_uppercase() == "=" =>
-                {
-                    col.handle_equality(left, right);
-                }
-                _ => {
-                    extract_eq_from_non_and(inner, col);
-                    col.non_eq.push(expr.clone());
-                }
+        Expr::Parenthesized(inner) => match inner.as_ref() {
+            Expr::BinaryOp { left, op, right } if op.to_uppercase() == "=" => {
+                col.handle_equality(left, right);
             }
-        }
+            _ => {
+                extract_eq_from_non_and(inner, col);
+                col.non_eq.push(expr.clone());
+            }
+        },
         _ => {
             col.non_eq.push(expr.clone());
         }
@@ -291,25 +293,33 @@ pub(crate) fn contains_param(expr: &Expr) -> bool {
         Expr::Parenthesized(inner) => contains_param(inner),
         Expr::IsNull { expr, .. } => contains_param(expr),
         Expr::FunctionCall { args, filter, .. } => {
-            args.iter().any(contains_param)
-                || filter.as_ref().is_some_and(|f| contains_param(f))
+            args.iter().any(contains_param) || filter.as_ref().is_some_and(|f| contains_param(f))
         }
-        Expr::Case { operand, whens, else_expr } => {
+        Expr::Case {
+            operand,
+            whens,
+            else_expr,
+        } => {
             operand.as_ref().is_some_and(|e| contains_param(e))
                 || whens
                     .iter()
                     .any(|w| contains_param(&w.condition) || contains_param(&w.result))
                 || else_expr.as_ref().is_some_and(|e| contains_param(e))
         }
-        Expr::Between { expr, low, high, .. } => {
-            contains_param(expr) || contains_param(low) || contains_param(high)
-        }
+        Expr::Between {
+            expr, low, high, ..
+        } => contains_param(expr) || contains_param(low) || contains_param(high),
         Expr::InList { list, .. } => list.iter().any(contains_param),
         Expr::InSubquery { .. } | Expr::Exists(_) | Expr::Subquery(_) => false,
         Expr::TypeCast { expr, .. } => contains_param(expr),
         Expr::Treat { expr, .. } => contains_param(expr),
         Expr::Array(exprs) => exprs.iter().any(contains_param),
-        Expr::Subscript { object, lower, upper, .. } => {
+        Expr::Subscript {
+            object,
+            lower,
+            upper,
+            ..
+        } => {
             contains_param(object)
                 || lower.as_ref().is_some_and(|e| contains_param(e))
                 || upper.as_ref().is_some_and(|e| contains_param(e))
