@@ -58,10 +58,11 @@ impl RewriteRule for DetectDuplicateEqKeys {
         let collector = eq_analyzer::collect_eq_predicates(where_clause, from, ctx.known_variables);
 
         let mut seen = HashSet::new();
-        let mut group_cols: Vec<String> = Vec::new();
-        for col in collector.tier1.iter() {
-            if seen.insert(col.clone()) {
-                group_cols.push(col.clone());
+        let mut group_cols: Vec<Vec<String>> = Vec::new();
+        for col_name in collector.tier1.iter() {
+            let key = col_name.last().cloned().unwrap_or_default();
+            if seen.insert(key) {
+                group_cols.push(col_name.clone());
             }
         }
 
@@ -70,10 +71,11 @@ impl RewriteRule for DetectDuplicateEqKeys {
         }
 
         let limit = ctx.config.probe_default_limit;
+        let non_param = collector.non_param_exprs();
         let probe = build_probe_statement(
             from,
             &collector.keep_exprs,
-            &collector.non_eq,
+            &non_param,
             &group_cols,
             limit,
         );
@@ -103,13 +105,13 @@ impl RewriteRule for DetectDuplicateEqKeys {
 fn build_probe_statement(
     from: &[TableRef],
     keep_exprs: &[Expr],
-    non_eq: &[Expr],
-    group_cols: &[String],
+    non_param_exprs: &[Expr],
+    group_cols: &[Vec<String>],
     limit: usize,
 ) -> Spanned<SelectStatement> {
     let mut targets: Vec<SelectTarget> = group_cols
         .iter()
-        .map(|col| SelectTarget::Expr(Expr::ColumnRef(vec![col.clone()]), None))
+        .map(|name| SelectTarget::Expr(Expr::ColumnRef(name.clone()), None))
         .collect();
 
     targets.push(SelectTarget::Expr(
@@ -131,7 +133,7 @@ fn build_probe_statement(
 
     let group_by: Vec<GroupByItem> = group_cols
         .iter()
-        .map(|col| GroupByItem::Expr(Expr::ColumnRef(vec![col.clone()])))
+        .map(|name| GroupByItem::Expr(Expr::ColumnRef(name.clone())))
         .collect();
 
     let having = Some(Expr::BinaryOp {
@@ -161,7 +163,7 @@ fn build_probe_statement(
 
     let limit_expr = Some(Expr::Literal(Literal::Integer(limit as i64)));
 
-    let where_clause = eq_analyzer::merge_exprs(keep_exprs, non_eq);
+    let where_clause = eq_analyzer::merge_exprs(keep_exprs, non_param_exprs);
 
     Spanned::without_span(SelectStatement {
         hints: vec![],
