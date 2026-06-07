@@ -10,11 +10,15 @@ use std::collections::HashSet;
 
 /// Collected equality predicate information from a WHERE clause.
 pub(crate) struct EqPredicateCollector {
-    /// Column names with parameterized/variable equalities (tier-1 candidates).
-    pub tier1: Vec<String>,
+    /// Column references with parameterized/variable equalities (tier-1 candidates).
+    /// Stores full `ObjectName` (e.g. `["bs", "is_plan"]`) to preserve table qualifiers
+    /// for GROUP BY generation in probe SQL.
+    pub tier1: Vec<Vec<String>>,
     /// Equality expressions between two known table columns (join conditions).
     pub keep_exprs: Vec<Expr>,
-    /// Non-parameterized expressions to preserve in the WHERE clause.
+    /// Non-equality expressions to preserve in the WHERE clause.
+    /// May include expressions that also contain parameter references;
+    /// consumers should use `non_param_exprs()` when building parameter-free probes.
     pub non_eq: Vec<Expr>,
     /// Whether a subquery or EXISTS was found in the WHERE clause.
     pub has_subquery: bool,
@@ -71,17 +75,11 @@ impl EqPredicateCollector {
 
     pub(crate) fn handle_equality(&mut self, left: &Expr, right: &Expr) {
         match (left, right) {
-            // Column = Parameter/MyBatisParam/JdbcParam → tier1: parameterized filter (variable input)
             (Expr::ColumnRef(name), Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::JdbcParam) => {
-                if let Some(col) = name.last() {
-                    self.tier1.push(col.clone());
-                }
+                self.tier1.push(name.clone());
             }
-            // Parameter/MyBatisParam/JdbcParam = Column → tier1
             (Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::JdbcParam, Expr::ColumnRef(name)) => {
-                if let Some(col) = name.last() {
-                    self.tier1.push(col.clone());
-                }
+                self.tier1.push(name.clone());
             }
             // Column = Literal → non_eq: hardcoded literal has no selectivity as candidate key
             // (e.g. `sub_src_type = '8'` is a constant filter, not a variable-driven equality)
@@ -93,14 +91,10 @@ impl EqPredicateCollector {
 
                 match (l_is_table, r_is_table) {
                     (true, false) => {
-                        if let Some(col) = l_parts.last() {
-                            self.tier1.push(col.clone());
-                        }
+                        self.tier1.push(l_parts.clone());
                     }
                     (false, true) => {
-                        if let Some(col) = r_parts.last() {
-                            self.tier1.push(col.clone());
-                        }
+                        self.tier1.push(r_parts.clone());
                     }
                     _ => {
                         self.keep_exprs.push(make_binary_eq(left, right));
@@ -120,6 +114,14 @@ impl EqPredicateCollector {
             // Neither is ColumnRef → ignore
             _ => {}
         }
+    }
+
+    pub(crate) fn non_param_exprs(&self) -> Vec<Expr> {
+        self.non_eq
+            .iter()
+            .filter(|e| !contains_param(e))
+            .cloned()
+            .collect()
     }
 }
 
@@ -183,11 +185,17 @@ pub(crate) fn collect_from(expr: &Expr, col: &mut EqPredicateCollector) {
             col.non_eq.push(expr.clone());
         }
         Expr::Parenthesized(inner) => {
-            // Extract equality sub-expressions for tier1 analysis,
-            // but preserve the PARENTHESIZED expression in non_eq
-            // to maintain correct AND/OR precedence in the probe SQL.
-            extract_eq_from_non_and(inner, col);
-            col.non_eq.push(expr.clone());
+            match inner.as_ref() {
+                Expr::BinaryOp { left, op, right }
+                    if op.to_uppercase() == "=" =>
+                {
+                    col.handle_equality(left, right);
+                }
+                _ => {
+                    extract_eq_from_non_and(inner, col);
+                    col.non_eq.push(expr.clone());
+                }
+            }
         }
         _ => {
             col.non_eq.push(expr.clone());
@@ -272,5 +280,40 @@ fn collect_table_aliases_recursive(tr: &TableRef, aliases: &mut HashSet<String>)
         TableRef::Pivot { source, .. } | TableRef::Unpivot { source, .. } => {
             collect_table_aliases_recursive(source, aliases);
         }
+    }
+}
+
+pub(crate) fn contains_param(expr: &Expr) -> bool {
+    match expr {
+        Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::JdbcParam => true,
+        Expr::BinaryOp { left, right, .. } => contains_param(left) || contains_param(right),
+        Expr::UnaryOp { expr, .. } => contains_param(expr),
+        Expr::Parenthesized(inner) => contains_param(inner),
+        Expr::IsNull { expr, .. } => contains_param(expr),
+        Expr::FunctionCall { args, filter, .. } => {
+            args.iter().any(contains_param)
+                || filter.as_ref().is_some_and(|f| contains_param(f))
+        }
+        Expr::Case { operand, whens, else_expr } => {
+            operand.as_ref().is_some_and(|e| contains_param(e))
+                || whens
+                    .iter()
+                    .any(|w| contains_param(&w.condition) || contains_param(&w.result))
+                || else_expr.as_ref().is_some_and(|e| contains_param(e))
+        }
+        Expr::Between { expr, low, high, .. } => {
+            contains_param(expr) || contains_param(low) || contains_param(high)
+        }
+        Expr::InList { list, .. } => list.iter().any(contains_param),
+        Expr::InSubquery { .. } | Expr::Exists(_) | Expr::Subquery(_) => false,
+        Expr::TypeCast { expr, .. } => contains_param(expr),
+        Expr::Treat { expr, .. } => contains_param(expr),
+        Expr::Array(exprs) => exprs.iter().any(contains_param),
+        Expr::Subscript { object, lower, upper, .. } => {
+            contains_param(object)
+                || lower.as_ref().is_some_and(|e| contains_param(e))
+                || upper.as_ref().is_some_and(|e| contains_param(e))
+        }
+        _ => false,
     }
 }
