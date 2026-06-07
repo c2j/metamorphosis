@@ -331,6 +331,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "metamorphosis-verieql"
+version = "0.1.0"
+dependencies = [
+ "ogsql-parser",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+ "z3",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
