@@ -34,7 +34,7 @@ pub fn extract_counterexample(
                 match val {
                     Some(v) => {
                         if let Some(iv) = v.as_i64() {
-                            let col_label = hash_str(key.split('.').last().unwrap_or(""));
+                            let col_label = hash_str(key.split('.').next_back().unwrap_or(""));
                             let label_sym = z3::Symbol::from(format!("lbl_{col_label}").as_str());
                             let label_dyn = z3::ast::Dynamic::new_const(label_sym, &env.string_label_sort);
                             let is_null_val = model.eval(

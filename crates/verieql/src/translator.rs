@@ -52,8 +52,8 @@ fn translate_select(s: &SelectStatement) -> Result<Relation, TranslateError> {
         rel = Relation::OrderBy {
             input: Box::new(rel),
             items: items?,
-            limit: s.limit.as_ref().map(|e| translate_expr(e)).transpose()?,
-            offset: s.offset.as_ref().map(|e| translate_expr(e)).transpose()?,
+            limit: s.limit.as_ref().map(translate_expr).transpose()?,
+            offset: s.offset.as_ref().map(translate_expr).transpose()?,
         };
     }
 
@@ -121,7 +121,7 @@ fn translate_table_ref(tref: &TableRef) -> Result<Relation, TranslateError> {
                 left: Box::new(l),
                 right: Box::new(r),
                 join_type: jt,
-                condition: condition.as_ref().map(|c| translate_expr(c)).transpose()?,
+                condition: condition.as_ref().map(translate_expr).transpose()?,
             })
         }
         TableRef::Values { .. } => Ok(Relation::Values { rows: Vec::new() }),
@@ -179,7 +179,7 @@ fn translate_group_by(
         input: Box::new(input.clone()),
         keys: keys?,
         aggregates: Vec::new(),
-        having: having.map(|h| translate_expr(h)).transpose()?,
+        having: having.map(translate_expr).transpose()?,
     })
 }
 
@@ -315,7 +315,7 @@ fn translate_expr(expr: &OExpr) -> Result<Expr, TranslateError> {
             negated,
         } => {
             let e = translate_expr(inner)?;
-            let ls: Result<Vec<_>, _> = list.iter().map(|l| translate_expr(l)).collect();
+            let ls: Result<Vec<_>, _> = list.iter().map(translate_expr).collect();
             Ok(Expr::InList {
                 expr: Box::new(e),
                 list: ls?,
@@ -361,7 +361,7 @@ fn translate_expr(expr: &OExpr) -> Result<Expr, TranslateError> {
         OExpr::FunctionCall { name, args, .. } => {
             let fn_name = name.join(".");
             let translated_args: Result<Vec<_>, _> =
-                args.iter().map(|a| translate_expr(a)).collect();
+                args.iter().map(translate_expr).collect();
             Ok(Expr::FunctionCall {
                 name: fn_name,
                 args: translated_args?,
