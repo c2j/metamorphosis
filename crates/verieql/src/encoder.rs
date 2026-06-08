@@ -29,7 +29,12 @@ pub fn encode_relation_for_tuple(
             Ok(Bool::and(&[&inner, &cond]))
         }
         Relation::Project { input, .. } => encode_relation_for_tuple(input, output_tuple, env),
-        Relation::Join { left, right, condition, .. } => {
+        Relation::Join {
+            left,
+            right,
+            condition,
+            ..
+        } => {
             let l = encode_relation_for_tuple(left, output_tuple, env)?;
             let r = encode_relation_for_tuple(right, output_tuple, env)?;
             let mut parts = vec![l, r];
@@ -80,7 +85,10 @@ pub fn encode_expr_int(
             }
         }
         Expr::SqlNull => Ok(Int::fresh_const("SQL_NULL")),
-        Expr::UnaryOp { op: UnaryOp::Neg, expr: inner } => {
+        Expr::UnaryOp {
+            op: UnaryOp::Neg,
+            expr: inner,
+        } => {
             let v = encode_expr_int(inner, tuple, env)?;
             Ok(Int::sub(&[&Int::from_i64(0), &v]))
         }
@@ -138,10 +146,14 @@ pub fn encode_expr_bool(
             }
             _ => Err(EncodeError::UnsupportedExpr(format!("{:?}", op))),
         },
-        Expr::UnaryOp { op: UnaryOp::Not, expr: inner } => {
-            Ok(encode_expr_bool(inner, tuple, env)?.not())
-        }
-        Expr::IsNull { expr: inner, negated } => {
+        Expr::UnaryOp {
+            op: UnaryOp::Not,
+            expr: inner,
+        } => Ok(encode_expr_bool(inner, tuple, env)?.not()),
+        Expr::IsNull {
+            expr: inner,
+            negated,
+        } => {
             let col_key = match inner.as_ref() {
                 Expr::ColumnRef { table, column } => env.attr_key(table.as_deref(), column),
                 _ => "unknown".to_string(),
@@ -151,8 +163,16 @@ pub fn encode_expr_bool(
                 &env.string_label_sort,
             );
             let args: Vec<&dyn Ast> = vec![tuple, &label];
-            let is_null = env.null_func.apply(&args).as_bool().ok_or(EncodeError::TypeMismatch)?;
-            if *negated { Ok(is_null.not()) } else { Ok(is_null) }
+            let is_null = env
+                .null_func
+                .apply(&args)
+                .as_bool()
+                .ok_or(EncodeError::TypeMismatch)?;
+            if *negated {
+                Ok(is_null.not())
+            } else {
+                Ok(is_null)
+            }
         }
         Expr::Literal(ExprValue::Boolean(v)) => Ok(Bool::from_bool(*v)),
         _ => {
@@ -164,5 +184,6 @@ pub fn encode_expr_bool(
 
 /// Deterministic hash for string-to-integer mapping (column labels in Z3).
 pub(crate) fn hash_str(s: &str) -> i64 {
-    s.bytes().fold(0i64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as i64))
+    s.bytes()
+        .fold(0i64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as i64))
 }

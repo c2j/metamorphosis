@@ -696,17 +696,15 @@ fn run_suggest(
     } else {
         let fmt = resolve_input_format(&file, input_format);
         match fmt {
-            InputFormat::Csv => {
-                run_suggest_csv_file(
-                    &file,
-                    version,
-                    schema.as_ref(),
-                    &engine,
-                    output,
-                    procedure,
-                    mybatis,
-                )
-            }
+            InputFormat::Csv => run_suggest_csv_file(
+                &file,
+                version,
+                schema.as_ref(),
+                &engine,
+                output,
+                procedure,
+                mybatis,
+            ),
             InputFormat::Sql => run_suggest_sql_file(
                 &file,
                 version,

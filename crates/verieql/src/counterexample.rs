@@ -18,9 +18,8 @@ pub fn extract_counterexample(
             let tuple_name = format!("t{}", i + 1);
             let tuple = z3::ast::Dynamic::new_const(tuple_name, &env.tuple_sort);
 
-            let deleted_val = model.eval(
-                &env.deleted_func.apply(&[&tuple]).as_bool().unwrap(), true,
-            );
+            let deleted_val =
+                model.eval(&env.deleted_func.apply(&[&tuple]).as_bool().unwrap(), true);
             if is_z3_true(&deleted_val) {
                 continue;
             }
@@ -36,9 +35,14 @@ pub fn extract_counterexample(
                         if let Some(iv) = v.as_i64() {
                             let col_label = hash_str(key.split('.').next_back().unwrap_or(""));
                             let label_sym = z3::Symbol::from(format!("lbl_{col_label}").as_str());
-                            let label_dyn = z3::ast::Dynamic::new_const(label_sym, &env.string_label_sort);
+                            let label_dyn =
+                                z3::ast::Dynamic::new_const(label_sym, &env.string_label_sort);
                             let is_null_val = model.eval(
-                                &env.null_func.apply(&[&tuple, &label_dyn]).as_bool().unwrap(), true,
+                                &env.null_func
+                                    .apply(&[&tuple, &label_dyn])
+                                    .as_bool()
+                                    .unwrap(),
+                                true,
                             );
                             if is_z3_true(&is_null_val) {
                                 row.push("NULL".to_string());
@@ -58,14 +62,15 @@ pub fn extract_counterexample(
             }
         }
 
-        tables.push(CounterexampleTable { name: name.clone(), rows });
+        tables.push(CounterexampleTable {
+            name: name.clone(),
+            rows,
+        });
     }
 
     Counterexample { tables }
 }
 
 fn is_z3_true(opt: &Option<z3::ast::Bool>) -> bool {
-    opt.as_ref()
-        .and_then(|b| b.as_bool())
-        .unwrap_or(false)
+    opt.as_ref().and_then(|b| b.as_bool()).unwrap_or(false)
 }

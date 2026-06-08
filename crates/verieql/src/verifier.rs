@@ -29,7 +29,9 @@ pub fn build_equivalence_formula(
 
     match env.semantics {
         Semantics::Bag => build_bag_equivalence(l_tuples, r_tuples, l_attr_keys, r_attr_keys, env),
-        Semantics::List => build_list_equivalence(l_tuples, r_tuples, l_attr_keys, r_attr_keys, env),
+        Semantics::List => {
+            build_list_equivalence(l_tuples, r_tuples, l_attr_keys, r_attr_keys, env)
+        }
     }
 }
 
@@ -101,9 +103,13 @@ fn tuple_equals(
     let mut eqs: Vec<Bool> = Vec::new();
 
     for (a1, a2) in attrs1.iter().zip(attrs2.iter()) {
-        let f1 = env.attr_funcs.get(a1)
+        let f1 = env
+            .attr_funcs
+            .get(a1)
             .ok_or_else(|| VerifierError::EncodingError(format!("unknown attr: {a1}")))?;
-        let f2 = env.attr_funcs.get(a2)
+        let f2 = env
+            .attr_funcs
+            .get(a2)
             .ok_or_else(|| VerifierError::EncodingError(format!("unknown attr: {a2}")))?;
 
         let v1 = f1.apply(&[t1]).as_int().unwrap();
@@ -138,10 +144,13 @@ fn tuple_equals(
 fn count_non_deleted(tuples: &[Dynamic], env: &Environment) -> Int {
     let one = Int::from_i64(1);
     let zero = Int::from_i64(0);
-    let terms: Vec<Int> = tuples.iter().map(|t| {
-        let del = env.deleted_func.apply(&[t]).as_bool().unwrap();
-        Bool::ite(&del.not(), &one, &zero)
-    }).collect();
+    let terms: Vec<Int> = tuples
+        .iter()
+        .map(|t| {
+            let del = env.deleted_func.apply(&[t]).as_bool().unwrap();
+            Bool::ite(&del.not(), &one, &zero)
+        })
+        .collect();
     sum_ints(&terms)
 }
 
