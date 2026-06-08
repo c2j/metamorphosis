@@ -2,7 +2,9 @@
 
 use crate::context::RewriteContext;
 use crate::registry::RuleRegistry;
-use crate::types::{Confidence, RewriteAction, RewriteResult, SafetyLevel, Suggestion};
+use crate::types::{
+    Confidence, MatchFailure, MatchResult, RewriteAction, RewriteResult, SafetyLevel, Suggestion,
+};
 use ogsql_parser::ast::Statement;
 use ogsql_parser::formatter::SqlFormatter;
 use tracing::debug;
@@ -29,11 +31,13 @@ impl RewriteEngine {
         let mut result = Vec::with_capacity(stmts.len());
         let mut all_suggestions = Vec::new();
         let mut any_changed = false;
+        let mut all_failures = Vec::new();
 
         for stmt in stmts {
-            let (rewritten, suggestions, changed) = self.rewrite_one(ctx, stmt);
+            let (rewritten, suggestions, failures, changed) = self.rewrite_one(ctx, stmt);
             result.push(rewritten);
             all_suggestions.extend(suggestions);
+            all_failures.extend(failures);
             if changed {
                 any_changed = true;
             }
@@ -43,6 +47,7 @@ impl RewriteEngine {
             statements: result,
             suggestions: all_suggestions,
             changed: any_changed,
+            match_failures: all_failures,
         }
     }
 
@@ -51,9 +56,10 @@ impl RewriteEngine {
         &self,
         ctx: &RewriteContext,
         mut stmt: Statement,
-    ) -> (Statement, Vec<Suggestion>, bool) {
+    ) -> (Statement, Vec<Suggestion>, Vec<MatchFailure>, bool) {
         let rules = self.registry.filtered_rules(ctx);
         let mut suggestions = Vec::new();
+        let mut match_failures = Vec::new();
         let mut iteration = 0;
         let mut changed = false;
 
@@ -69,18 +75,28 @@ impl RewriteEngine {
             iteration += 1;
 
             for rule in &auto_rules {
-                if rule.matches(ctx, &stmt) {
-                    if let Some(RewriteAction::Replace(new_stmt)) = rule.apply(ctx, &stmt) {
-                        if validate_statement(&new_stmt) {
-                            stmt = *new_stmt;
-                            iteration_changed = true;
-                            changed = true;
-                            debug!(
-                                rule_id = rule.id(),
-                                iteration = iteration,
-                                "Safe rewrite applied"
-                            );
-                            break;
+                match rule.matches(ctx, &stmt) {
+                    MatchResult::Matched => {
+                        if let Some(RewriteAction::Replace(new_stmt)) = rule.apply(ctx, &stmt) {
+                            if validate_statement(&new_stmt) {
+                                stmt = *new_stmt;
+                                iteration_changed = true;
+                                changed = true;
+                                debug!(
+                                    rule_id = rule.id(),
+                                    iteration = iteration,
+                                    "Safe rewrite applied"
+                                );
+                                break;
+                            }
+                        }
+                    }
+                    MatchResult::NotMatched { reason } => {
+                        if iteration == 1 {
+                            match_failures.push(MatchFailure {
+                                rule_id: rule.id().to_string(),
+                                reason,
+                            });
                         }
                     }
                 }
@@ -99,20 +115,28 @@ impl RewriteEngine {
         }
 
         for rule in &manual_rules {
-            if rule.matches(ctx, &stmt) {
-                if let Some(action) = rule.apply(ctx, &stmt) {
-                    suggestions.push(Suggestion {
+            match rule.matches(ctx, &stmt) {
+                MatchResult::Matched => {
+                    if let Some(action) = rule.apply(ctx, &stmt) {
+                        suggestions.push(Suggestion {
+                            rule_id: rule.id().to_string(),
+                            rule_description: rule.description().to_string(),
+                            action,
+                            confidence: Confidence::High,
+                            notes: Vec::new(),
+                        });
+                    }
+                }
+                MatchResult::NotMatched { reason } => {
+                    match_failures.push(MatchFailure {
                         rule_id: rule.id().to_string(),
-                        rule_description: rule.description().to_string(),
-                        action,
-                        confidence: Confidence::High,
-                        notes: Vec::new(),
+                        reason,
                     });
                 }
             }
         }
 
-        (stmt, suggestions, changed)
+        (stmt, suggestions, match_failures, changed)
     }
 }
 

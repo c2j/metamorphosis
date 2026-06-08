@@ -1,7 +1,7 @@
 //! Rule trait, category enum, and registry.
 
 use crate::context::RewriteContext;
-use crate::types::{RewriteAction, RuleCategory, SafetyLevel};
+use crate::types::{MatchResult, RewriteAction, RuleCategory, SafetyLevel};
 use ogsql_parser::ast::Statement;
 use std::fmt::Debug;
 
@@ -26,8 +26,10 @@ pub trait RewriteRule: Debug + Send + Sync {
     /// Safety level: determines how the engine handles matched results.
     fn safety_level(&self) -> SafetyLevel;
 
-    /// Check whether this rule applies to the given statement.
-    fn matches(&self, ctx: &RewriteContext, stmt: &Statement) -> bool;
+    /// Check whether this rule applies to the given statement, returning
+    /// either [`MatchResult::Matched`] or [`MatchResult::NotMatched`] with
+    /// a human-readable reason.
+    fn matches(&self, ctx: &RewriteContext, stmt: &Statement) -> MatchResult;
 
     /// Execute the rewrite, returning an action if the rule matched.
     fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Option<RewriteAction>;

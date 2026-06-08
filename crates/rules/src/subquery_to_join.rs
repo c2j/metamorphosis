@@ -12,7 +12,9 @@
 //! Safety guards: only rewrites single-table subqueries without GROUP BY,
 //! HAVING, set operations, or JOINs inside the subquery.
 
-use metamorphosis_core::types::{RewriteAction, RuleCategory, SafetyLevel, Severity};
+use metamorphosis_core::types::{
+    MatchResult, RewriteAction, RuleCategory, SafetyLevel, Severity,
+};
 use metamorphosis_core::{RewriteContext, RewriteRule};
 use ogsql_parser::ast::{
     Expr, JoinType, SelectStatement, SelectTarget, Spanned, Statement, TableRef,
@@ -59,25 +61,38 @@ impl RewriteRule for SubqueryToJoin {
         SafetyLevel::Conditional
     }
 
-    fn matches(&self, _ctx: &RewriteContext, stmt: &Statement) -> bool {
+    fn matches(&self, _ctx: &RewriteContext, stmt: &Statement) -> MatchResult {
         let select = match stmt {
             Statement::Select(s) => &s.node,
-            _ => return false,
+            _ => {
+                return MatchResult::NotMatched {
+                    reason: "Statement is not a SELECT".to_string(),
+                }
+            }
         };
 
-        // Check WHERE clause for rewritable subquery patterns.
         if let Some(ref where_clause) = select.where_clause {
             if find_where_pattern(where_clause).is_some() {
-                return true;
+                return MatchResult::Matched;
             }
         }
 
-        // Check SELECT targets for scalar subqueries (suggest only).
         if has_scalar_subquery(&select.targets) {
-            return true;
+            return MatchResult::Matched;
         }
 
-        false
+        let mut reasons = Vec::new();
+        if select.where_clause.is_none() {
+            reasons.push("no WHERE clause");
+        } else {
+            reasons.push("no rewritable subquery pattern (EXISTS/IN/NOT IN/NOT EXISTS) in WHERE");
+        }
+        if !has_scalar_subquery(&select.targets) {
+            reasons.push("no scalar subquery in SELECT targets");
+        }
+        MatchResult::NotMatched {
+            reason: reasons.join("; "),
+        }
     }
 
     fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Option<RewriteAction> {

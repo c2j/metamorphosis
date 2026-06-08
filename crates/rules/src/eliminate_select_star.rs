@@ -1,4 +1,4 @@
-use metamorphosis_core::types::{RewriteAction, RuleCategory, SafetyLevel};
+use metamorphosis_core::types::{MatchResult, RewriteAction, RuleCategory, SafetyLevel};
 use metamorphosis_core::{RewriteContext, RewriteRule};
 use ogsql_parser::ast::{SelectTarget, Spanned};
 use ogsql_parser::{Expr, ObjectName, Statement, TableRef};
@@ -28,14 +28,30 @@ impl RewriteRule for EliminateSelectStar {
         SafetyLevel::Safe
     }
 
-    fn matches(&self, ctx: &RewriteContext, stmt: &Statement) -> bool {
+    fn matches(&self, ctx: &RewriteContext, stmt: &Statement) -> MatchResult {
         if ctx.schema.is_none() {
-            return false;
+            return MatchResult::NotMatched {
+                reason: "No schema map provided; cannot resolve column names for expansion"
+                    .to_string(),
+            };
         }
 
         match stmt {
-            Statement::Select(spanned) => has_wildcard_target(&spanned.targets),
-            _ => false,
+            Statement::Select(spanned) => {
+                if has_wildcard_target(&spanned.targets) {
+                    MatchResult::Matched
+                } else {
+                    MatchResult::NotMatched {
+                        reason: "No wildcard target (SELECT *) found in target list".to_string(),
+                    }
+                }
+            }
+            _ => MatchResult::NotMatched {
+                reason: format!(
+                    "Statement is {} (not SELECT)",
+                    stmt_type_label(stmt)
+                ),
+            },
         }
     }
 
@@ -90,6 +106,19 @@ impl RewriteRule for EliminateSelectStar {
 /// Check if any target is a wildcard (including qualified wildcards like `t.*`).
 fn has_wildcard_target(targets: &[SelectTarget]) -> bool {
     targets.iter().any(|t| matches!(t, SelectTarget::Star(_)))
+}
+
+fn stmt_type_label(stmt: &Statement) -> &'static str {
+    match stmt {
+        Statement::Select(_) => "SELECT",
+        Statement::Insert(_) => "INSERT",
+        Statement::Update(_) => "UPDATE",
+        Statement::Delete(_) => "DELETE",
+        Statement::CreateTable(_) => "CREATE TABLE",
+        Statement::Drop(_) => "DROP",
+        Statement::AlterTable(_) => "ALTER TABLE",
+        _ => "non-SELECT",
+    }
 }
 
 /// Resolve the first base table from the FROM clause, skipping subqueries/joins.

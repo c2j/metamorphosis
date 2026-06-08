@@ -65,6 +65,8 @@ pub struct RewriteResult {
     pub suggestions: Vec<Suggestion>,
     /// Whether any rewrite occurred.
     pub changed: bool,
+    /// Reasons why each checked rule did not match.
+    pub match_failures: Vec<MatchFailure>,
 }
 
 /// A single suggestion produced by a Manual-level rule.
@@ -75,6 +77,31 @@ pub struct Suggestion {
     pub action: RewriteAction,
     pub confidence: Confidence,
     pub notes: Vec<String>,
+}
+
+/// Result of checking whether a rule matches a statement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MatchResult {
+    /// The rule matches and can be applied.
+    Matched,
+    /// The rule does not match, with a human-readable reason.
+    NotMatched { reason: String },
+}
+
+impl MatchResult {
+    /// Returns `true` if the rule matched.
+    pub fn is_matched(&self) -> bool {
+        matches!(self, MatchResult::Matched)
+    }
+}
+
+/// Records why a specific rule did not match a statement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatchFailure {
+    /// The rule that was checked.
+    pub rule_id: String,
+    /// Human-readable explanation of why the rule did not match.
+    pub reason: String,
 }
 
 /// Category for grouping and filtering rules.

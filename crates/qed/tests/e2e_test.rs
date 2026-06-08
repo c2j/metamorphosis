@@ -147,7 +147,7 @@ fn test_eliminate_select_star_pipeline() {
         known_variables: None,
     };
 
-    assert!(rule.matches(&ctx, &original), "rule should match SELECT *");
+    assert!(rule.matches(&ctx, &original).is_matched(), "rule should match SELECT *");
 
     if let Some(metamorphosis_core::types::RewriteAction::Replace(rewritten)) =
         rule.apply(&ctx, &original)
