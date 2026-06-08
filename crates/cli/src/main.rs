@@ -773,8 +773,10 @@ fn run_suggest_from_procedure(
                     for s in &result.suggestions {
                         print_text_suggestion(s);
                     }
+                    print_match_failures(&result.match_failures);
                 } else {
-                    println!("Result: no matching rule");
+                    println!("No suggestions generated.");
+                    print_match_failures(&result.match_failures);
                 }
             }
         }
@@ -904,6 +906,23 @@ fn print_text_suggestion(s: &metamorphosis_core::Suggestion) {
     }
 }
 
+fn print_match_failures(failures: &[metamorphosis_core::MatchFailure]) {
+    if failures.is_empty() {
+        return;
+    }
+    println!("{}  Rule match report:{}", ansi(DIM), ansi(RESET));
+    for f in failures {
+        println!(
+            "  {}  [✗] {}{}{}",
+            ansi(DIM),
+            ansi(BOLD),
+            f.rule_id,
+            ansi(RESET)
+        );
+        println!("      {}{}{}", ansi(DIM), f.reason, ansi(RESET));
+    }
+}
+
 fn print_tsv_suggestion(s: &metamorphosis_core::Suggestion) {
     if let RewriteAction::Generate {
         ref stmt,
@@ -1017,8 +1036,10 @@ fn run_suggest_sql_file(
                     for s in &result.suggestions {
                         print_text_suggestion(s);
                     }
+                    print_match_failures(&result.match_failures);
                 } else {
-                    println!("Result: no matching rule");
+                    println!("No suggestions generated.");
+                    print_match_failures(&result.match_failures);
                 }
             }
         }
@@ -1150,8 +1171,10 @@ fn run_suggest_csv_file(
                     for s in &result.suggestions {
                         print_text_suggestion(s);
                     }
+                    print_match_failures(&result.match_failures);
                 } else {
-                    println!("Result: no matching rule");
+                    println!("No suggestions generated.");
+                    print_match_failures(&result.match_failures);
                 }
             }
         }
