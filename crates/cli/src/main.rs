@@ -189,8 +189,9 @@ fn load_sql(file: &Path) -> String {
     })
 }
 
-/// Load SQL statements from a CSV file where each line is one SQL statement.
-/// Returns (1-based line number, sql text) pairs, skipping empty and comment lines.
+/// Load SQL statements from a CSV file where each record is one SQL statement.
+/// Returns (1-based start line number, sql text) pairs, skipping empty and comment records.
+/// Supports RFC 4180 quoted fields — a quoted value may span multiple lines.
 fn load_csv_sql(file: &Path) -> Vec<(usize, String)> {
     let content = std::fs::read_to_string(file).unwrap_or_else(|e| {
         eprintln!("Error: cannot read '{}': {}", file.display(), e);
@@ -200,16 +201,114 @@ fn load_csv_sql(file: &Path) -> Vec<(usize, String)> {
     // Strip UTF-8 BOM if present (common in Windows-exported CSVs)
     let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
 
-    content
-        .lines()
-        .enumerate()
-        .map(|(i, line)| (i + 1, line))
-        .filter(|(_, line)| {
-            let trimmed = line.trim();
-            !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with("--")
-        })
-        .map(|(n, line)| (n, line.to_string()))
-        .collect()
+    let mut results: Vec<(usize, String)> = Vec::new();
+    let mut chars = content.chars().peekable();
+    let mut line_num: usize = 1;
+    let mut field_start_line: usize;
+
+    loop {
+        // Skip leading commas (empty columns before the SQL field)
+        while chars.peek() == Some(&',') {
+            chars.next();
+        }
+
+        // End of line or end of input
+        match chars.peek() {
+            None => break,
+            Some(&'\r') => {
+                chars.next();
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                line_num += 1;
+                continue;
+            }
+            Some(&'\n') => {
+                chars.next();
+                line_num += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        field_start_line = line_num;
+
+        // Read one field (quoted or unquoted)
+        let field = if chars.peek() == Some(&'"') {
+            chars.next(); // consume opening quote
+            let mut buf = String::new();
+            loop {
+                match chars.next() {
+                    None => break,
+                    Some('"') => {
+                        if chars.peek() == Some(&'"') {
+                            chars.next();
+                            buf.push('"');
+                        } else {
+                            // End of quoted field
+                            break;
+                        }
+                    }
+                    Some('\r') => {
+                        buf.push('\r');
+                        if chars.peek() == Some(&'\n') {
+                            chars.next();
+                            buf.push('\n');
+                        }
+                        line_num += 1;
+                    }
+                    Some('\n') => {
+                        buf.push('\n');
+                        line_num += 1;
+                    }
+                    Some(c) => buf.push(c),
+                }
+            }
+            buf
+        } else {
+            // Unquoted field: read until comma or end of line
+            let mut buf = String::new();
+            loop {
+                match chars.peek() {
+                    None | Some(&',') | Some(&'\r') | Some(&'\n') => break,
+                    Some(&c) => {
+                        buf.push(c);
+                        chars.next();
+                    }
+                }
+            }
+            buf
+        };
+
+        // Skip trailing commas (empty columns after the SQL field) until end of line
+        while chars.peek() == Some(&',') {
+            chars.next();
+        }
+        match chars.peek() {
+            Some(&'\r') => {
+                chars.next();
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                line_num += 1;
+            }
+            Some(&'\n') => {
+                chars.next();
+                line_num += 1;
+            }
+            _ => {}
+        }
+
+        let trimmed = field.trim();
+        let is_single_line = !trimmed.contains('\n');
+        let looks_like_comment =
+            trimmed.starts_with('#') || (is_single_line && trimmed.starts_with("--"));
+        if !trimmed.is_empty() && !looks_like_comment {
+            results.push((field_start_line, trimmed.to_string()));
+        }
+    }
+
+    results
 }
 
 fn load_schema(schema_path: Option<PathBuf>, sql_dir: Option<PathBuf>) -> Option<SchemaMap> {
@@ -532,15 +631,15 @@ fn run_rewrite_csv_file(
     }
 
     let mut any_rewritten = false;
-    for (line_num, si) in &parsed {
+    for (idx, (_, si)) in parsed.iter().enumerate() {
         let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
         let header = provenance::format_provenance_header(
-            *line_num,
+            idx + 1,
             provenance::stmt_type_label(&si.statement),
             Some(source_file_str),
             None,
-            *line_num,
-            *line_num,
+            0,
+            0,
             parsed.len(),
         );
 
@@ -561,14 +660,14 @@ fn run_rewrite_csv_file(
     if !any_rewritten {
         println!("-- No rewrites applied");
         if parsed.len() > 1 {
-            for (line_num, si) in &parsed {
+            for (idx, (_, si)) in parsed.iter().enumerate() {
                 let header = provenance::format_provenance_header(
-                    *line_num,
+                    idx + 1,
                     provenance::stmt_type_label(&si.statement),
                     Some(source_file_str),
                     None,
-                    *line_num,
-                    *line_num,
+                    0,
+                    0,
                     parsed.len(),
                 );
                 println!("{} no matching rule", header);
@@ -1036,15 +1135,15 @@ fn run_suggest_csv_file(
             println!("{}", suggestions_json);
         }
         OutputFormat::Text => {
-            for (line_num, si) in &parsed {
+            for (idx, (_, si)) in parsed.iter().enumerate() {
                 let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
                 let header = provenance::format_provenance_header(
-                    *line_num,
+                    idx + 1,
                     provenance::stmt_type_label(&si.statement),
                     Some(source_file_str),
                     None,
-                    *line_num,
-                    *line_num,
+                    0,
+                    0,
                     parsed.len(),
                 );
                 println!("{}", header);
