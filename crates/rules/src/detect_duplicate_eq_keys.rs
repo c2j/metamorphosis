@@ -4,7 +4,9 @@
 //! Manual level: only generates suggestions (probe SQL), never replaces.
 
 use crate::eq_analyzer;
-use metamorphosis_core::types::{Confidence, RewriteAction, RuleCategory, SafetyLevel};
+use metamorphosis_core::types::{
+    Confidence, MatchResult, RewriteAction, RuleCategory, SafetyLevel,
+};
 use metamorphosis_core::{RewriteContext, RewriteRule};
 use ogsql_parser::ast::{
     Expr, GroupByItem, Literal, OrderByItem, SelectStatement, SelectTarget, Spanned, Statement,
@@ -37,15 +39,28 @@ impl RewriteRule for DetectDuplicateEqKeys {
         SafetyLevel::Manual
     }
 
-    fn matches(&self, ctx: &RewriteContext, stmt: &Statement) -> bool {
+    fn matches(&self, ctx: &RewriteContext, stmt: &Statement) -> MatchResult {
         let select = match stmt {
             Statement::Select(s) => &s.node,
-            _ => return false,
+            _ => {
+                return MatchResult::NotMatched {
+                    reason: "Statement is not a SELECT".to_string(),
+                }
+            }
         };
 
         let (where_clause, from) = eq_analyzer::resolve_query(select);
         let collector = eq_analyzer::collect_eq_predicates(where_clause, from, ctx.known_variables);
-        collector.tier1.len() >= 2
+        if collector.tier1.len() >= 2 {
+            MatchResult::Matched
+        } else {
+            MatchResult::NotMatched {
+                reason: format!(
+                    "Only {} equality condition(s) in WHERE clause; need ≥ 2",
+                    collector.tier1.len()
+                ),
+            }
+        }
     }
 
     fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Option<RewriteAction> {
