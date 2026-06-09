@@ -40,6 +40,13 @@ enum InputFormat {
     Csv,
 }
 
+#[derive(ValueEnum, Clone, Debug, Default)]
+enum VerifyEngine {
+    #[default]
+    Qed,
+    Verieql,
+}
+
 impl std::fmt::Display for InputFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -119,6 +126,10 @@ enum Command {
         schema: Option<PathBuf>,
         #[arg(long, conflicts_with = "schema")]
         sql_dir: Option<PathBuf>,
+        #[arg(long, default_value = "qed")]
+        engine: VerifyEngine,
+        #[arg(long, default_value_t = 2)]
+        bound: usize,
         #[arg(short = 'o', long, default_value = "text")]
         output: String,
     },
@@ -177,8 +188,21 @@ fn main() {
             rewritten,
             schema,
             sql_dir,
+            engine,
+            bound,
             output,
-        } => verify_cmd::run_verify(original, rewritten, schema, sql_dir, &output),
+        } => verify_cmd::run_verify(
+            original,
+            rewritten,
+            schema,
+            sql_dir,
+            &output,
+            match engine {
+                VerifyEngine::Qed => verify_cmd::Engine::Qed,
+                VerifyEngine::Verieql => verify_cmd::Engine::Verieql,
+            },
+            bound,
+        ),
     }
 }
 

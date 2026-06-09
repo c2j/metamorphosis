@@ -1,37 +1,82 @@
-//! `verify` subcommand — uses embedded Z3 SMT solver (QED) to prove
-//! semantic equivalence between two SQL queries.
+//! `verify` subcommand — uses embedded Z3 SMT solver to prove semantic
+//! equivalence between two SQL queries.
 //!
-//! Requires DDL schema (via `--sql-dir` or `--schema` JSON) to build the
-//! relational schema needed by the prover.
+//! Supports two verification engines:
+//! - **qed** (default): metamorphosis-qed prover with rich schema constraints
+//! - **verieql**: bounded equivalence verification (OOPSLA 2024 algorithm)
+//!
+//! Requires DDL schema (via `--sql-dir` or `--schema` JSON).
 
 use std::path::{Path, PathBuf};
 
 use metamorphosis_qed::prover::ProverConfig;
 use metamorphosis_qed::schema::{extract_rich_schema, RichSchema};
 use metamorphosis_qed::verify::{verify_rewrite, VerificationResult};
+use metamorphosis_verieql::types::*;
+use metamorphosis_verieql::VeriEql;
 use ogsql_parser::ast::Statement;
 use ogsql_parser::{ParseOptions, Parser};
+
+/// Available verification engines.
+pub enum Engine {
+    Qed,
+    Verieql,
+}
 
 // ── Public entrypoint ────────────────────────────────────────────────────
 
 /// Run the `verify` subcommand.
 ///
-/// Reads both SQL files, loads the DDL schema, invokes the QED/Z3 prover,
-/// and prints the result in the requested format.
+/// Reads both SQL files, loads the DDL schema, invokes the selected
+/// verification engine, and prints the result.
 pub fn run_verify(
     original: PathBuf,
     rewritten: PathBuf,
     schema_path: Option<PathBuf>,
     sql_dir: Option<PathBuf>,
     output: &str,
+    engine: Engine,
+    bound: usize,
 ) {
-    let schema = load_verify_schema(schema_path, sql_dir);
-
     let original_sql = read_file(&original);
-    let original_stmt = parse_single_query(&original_sql, &original);
-
     let rewritten_sql = read_file(&rewritten);
-    let rewritten_stmt = parse_single_query(&rewritten_sql, &rewritten);
+
+    match engine {
+        Engine::Qed => run_verify_qed(
+            &original_sql,
+            &original,
+            &rewritten_sql,
+            &rewritten,
+            schema_path,
+            sql_dir,
+            output,
+        ),
+        Engine::Verieql => run_verify_verieql(
+            &original_sql,
+            &rewritten_sql,
+            schema_path,
+            sql_dir,
+            output,
+            bound,
+        ),
+    }
+}
+
+// ── QED engine ──────────────────────────────────────────────────────────
+
+fn run_verify_qed(
+    original_sql: &str,
+    original_path: &Path,
+    rewritten_sql: &str,
+    rewritten_path: &Path,
+    schema_path: Option<PathBuf>,
+    sql_dir: Option<PathBuf>,
+    output: &str,
+) {
+    let schema = load_rich_schema(schema_path, sql_dir);
+
+    let original_stmt = parse_single_query(original_sql, original_path);
+    let rewritten_stmt = parse_single_query(rewritten_sql, rewritten_path);
 
     let config = ProverConfig::default();
     let result = match verify_rewrite(
@@ -49,17 +94,49 @@ pub fn run_verify(
     };
 
     match output {
-        "json" => print_json(&result),
-        _ => print_text(&result),
+        "json" => print_qed_json(&result),
+        _ => print_qed_text(&result),
+    }
+}
+
+// ── VeriEQL engine ──────────────────────────────────────────────────────
+
+fn run_verify_verieql(
+    original_sql: &str,
+    rewritten_sql: &str,
+    schema_path: Option<PathBuf>,
+    sql_dir: Option<PathBuf>,
+    output: &str,
+    bound: usize,
+) {
+    let schema = load_verieql_schema(schema_path, sql_dir);
+    let constraints = serde_json::json!(null);
+
+    let result = match VeriEql::verify(
+        original_sql,
+        rewritten_sql,
+        &schema,
+        &constraints,
+        Bound(bound),
+        Semantics::Bag,
+    ) {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("Error: VeriEQL verification failed: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    match output {
+        "json" => print_verieql_json(&result, original_sql, rewritten_sql),
+        _ => print_verieql_text(&result, original_sql, rewritten_sql),
     }
 }
 
 // ── Schema loading ───────────────────────────────────────────────────────
 
-/// Load a [`RichSchema`] from either a JSON schema file or a DDL directory.
-///
-/// Exactly one of `schema_path` or `sql_dir` must be `Some`.
-fn load_verify_schema(schema_path: Option<PathBuf>, sql_dir: Option<PathBuf>) -> RichSchema {
+/// Load a [`RichSchema`] for the QED engine.
+fn load_rich_schema(schema_path: Option<PathBuf>, sql_dir: Option<PathBuf>) -> RichSchema {
     match (schema_path, sql_dir) {
         (Some(p), None) => load_schema_from_json(p),
         (None, Some(dir)) => load_schema_from_dir(dir),
@@ -68,7 +145,25 @@ fn load_verify_schema(schema_path: Option<PathBuf>, sql_dir: Option<PathBuf>) ->
             std::process::exit(1);
         }
         (Some(_), Some(_)) => {
-            // clap's conflicts_with prevents this at arg-parsing time
+            eprintln!("Error: --schema and --sql-dir are mutually exclusive");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Load a [`Vec<TableSchema>`] for the VeriEQL engine.
+fn load_verieql_schema(
+    schema_path: Option<PathBuf>,
+    sql_dir: Option<PathBuf>,
+) -> Vec<TableSchema> {
+    match (schema_path, sql_dir) {
+        (Some(p), None) => load_verieql_schema_from_json(p),
+        (None, Some(dir)) => load_verieql_schema_from_dir(dir),
+        (None, None) => {
+            eprintln!("Error: --schema or --sql-dir is required for verify");
+            std::process::exit(1);
+        }
+        (Some(_), Some(_)) => {
             eprintln!("Error: --schema and --sql-dir are mutually exclusive");
             std::process::exit(1);
         }
@@ -172,12 +267,95 @@ fn load_schema_from_dir(dir: PathBuf) -> RichSchema {
 }
 
 /// Parse a DDL string and extract a [`RichSchema`].
-///
-/// Non-DDL statements are silently ignored by `extract_rich_schema`.
 fn parse_and_extract(ddl: &str) -> RichSchema {
     let (stmt_infos, _errors) = Parser::parse_sql(ddl);
     let stmts: Vec<Statement> = stmt_infos.into_iter().map(|si| si.statement).collect();
     extract_rich_schema(&stmts)
+}
+
+fn load_verieql_schema_from_json(path: PathBuf) -> Vec<TableSchema> {
+    let content = read_file(&path);
+
+    let schema_map: std::collections::HashMap<String, std::collections::HashMap<String, String>> =
+        serde_json::from_str(&content).unwrap_or_else(|e| {
+            eprintln!("Error: invalid schema JSON '{}': {}", path.display(), e);
+            std::process::exit(1);
+        });
+
+    if schema_map.is_empty() {
+        eprintln!("Error: schema JSON '{}' is empty", path.display());
+        std::process::exit(1);
+    }
+
+    schema_map_to_verieql(&schema_map)
+}
+
+fn load_verieql_schema_from_dir(dir: PathBuf) -> Vec<TableSchema> {
+    let rich = load_schema_from_dir(dir);
+    rich_schema_to_verieql(&rich)
+}
+
+fn schema_map_to_verieql(
+    map: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+) -> Vec<TableSchema> {
+    map.iter()
+        .map(|(table_name, columns)| TableSchema {
+            name: table_name.clone(),
+            columns: columns
+                .iter()
+                .map(|(col_name, col_type)| ColumnDef {
+                    name: col_name.clone(),
+                    col_type: sql_type_to_verieql(col_type),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn rich_schema_to_verieql(schema: &RichSchema) -> Vec<TableSchema> {
+    schema
+        .tables
+        .iter()
+        .map(|(table_name, info)| TableSchema {
+            name: table_name.clone(),
+            columns: info
+                .columns
+                .iter()
+                .map(|col| ColumnDef {
+                    name: col.name.clone(),
+                    col_type: sql_type_to_verieql(&col.data_type),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn sql_type_to_verieql(ty: &str) -> ColumnType {
+    match ty.to_uppercase() {
+        t if t.starts_with("INT") || t.starts_with("BIGINT") || t.starts_with("SMALLINT") => {
+            ColumnType::Integer
+        }
+        t if t.starts_with("VARCHAR")
+            || t.starts_with("CHAR")
+            || t.starts_with("TEXT")
+            || t.starts_with("CLOB") =>
+        {
+            ColumnType::Varchar
+        }
+        t if t.starts_with("BOOL") => ColumnType::Boolean,
+        t if t.starts_with("DATE") || t.starts_with("TIMESTAMP") || t.starts_with("TIME") => {
+            ColumnType::Date
+        }
+        t if t.starts_with("FLOAT")
+            || t.starts_with("DOUBLE")
+            || t.starts_with("NUMERIC")
+            || t.starts_with("DECIMAL")
+            || t.starts_with("REAL") =>
+        {
+            ColumnType::Float
+        }
+        _ => ColumnType::Integer,
+    }
 }
 
 // ── SQL file parsing ─────────────────────────────────────────────────────
@@ -265,10 +443,9 @@ fn parse_single_query(sql: &str, file: &Path) -> Statement {
     stmts.into_iter().next().expect("just verified non-empty")
 }
 
-// ── Output formatting ────────────────────────────────────────────────────
+// ── Output formatting (QED) ─────────────────────────────────────────────
 
-/// Print result in human-readable text format.
-fn print_text(result: &VerificationResult) {
+fn print_qed_text(result: &VerificationResult) {
     match &result.proof {
         metamorphosis_qed::prover::ProofResult::Equivalent => {
             println!("✓ Equivalent (proven in {}ms)", result.elapsed_ms);
@@ -276,7 +453,6 @@ fn print_text(result: &VerificationResult) {
         metamorphosis_qed::prover::ProofResult::NotEquivalent { counterexample } => {
             println!("✗ Not Equivalent");
 
-            // Show column info when available
             match (&result.original_columns, &result.rewritten_columns) {
                 (Some(orig), Some(rew)) => {
                     if orig.len() != rew.len() {
@@ -337,8 +513,7 @@ fn print_text(result: &VerificationResult) {
     println!("  Rewritten: {}", result.rewritten_sql);
 }
 
-/// Print result as JSON.
-fn print_json(result: &VerificationResult) {
+fn print_qed_json(result: &VerificationResult) {
     let outcome = match &result.proof {
         metamorphosis_qed::prover::ProofResult::Equivalent => "Equivalent",
         metamorphosis_qed::prover::ProofResult::NotEquivalent { .. } => "NotEquivalent",
@@ -352,6 +527,7 @@ fn print_json(result: &VerificationResult) {
         "original": result.original_sql,
         "rewritten": result.rewritten_sql,
         "elapsed_ms": result.elapsed_ms,
+        "engine": "qed",
     });
 
     if let Some(orig) = &result.original_columns {
@@ -360,6 +536,69 @@ fn print_json(result: &VerificationResult) {
     if let Some(rew) = &result.rewritten_columns {
         obj["rewritten_columns"] = serde_json::json!(rew);
     }
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&obj).expect("JSON serialization failed")
+    );
+}
+
+// ── Output formatting (VeriEQL) ──────────────────────────────────────────
+
+fn print_verieql_text(
+    report: &metamorphosis_verieql::types::ProofReport,
+    original_sql: &str,
+    rewritten_sql: &str,
+) {
+    use metamorphosis_verieql::types::ProofResult;
+    match &report.result {
+        ProofResult::Equivalent => {
+            println!(
+                "✓ Equivalent (VeriEQL, bound={}, translate={}ms, solve={}ms)",
+                report.bound.0, report.translate_ms, report.solve_ms
+            );
+        }
+        ProofResult::NotEquivalent { counterexample } => {
+            println!("✗ Not Equivalent (VeriEQL, bound={})", report.bound.0);
+            if !counterexample.tables.is_empty() {
+                println!("  Counterexample:");
+                for table in &counterexample.tables {
+                    println!("    {}:", table.name);
+                    for row in &table.rows {
+                        println!("      [{}]", row.join(", "));
+                    }
+                }
+            }
+        }
+        ProofResult::Unknown { reason } => {
+            println!("? Unknown (VeriEQL): {reason}");
+        }
+    }
+    println!("  Original:  {original_sql}");
+    println!("  Rewritten: {rewritten_sql}");
+}
+
+fn print_verieql_json(
+    report: &metamorphosis_verieql::types::ProofReport,
+    original_sql: &str,
+    rewritten_sql: &str,
+) {
+    use metamorphosis_verieql::types::ProofResult;
+    let outcome = match &report.result {
+        ProofResult::Equivalent => "Equivalent",
+        ProofResult::NotEquivalent { .. } => "NotEquivalent",
+        ProofResult::Unknown { .. } => "Unknown",
+    };
+
+    let obj = serde_json::json!({
+        "result": outcome,
+        "original": original_sql,
+        "rewritten": rewritten_sql,
+        "engine": "verieql",
+        "bound": report.bound.0,
+        "translate_ms": report.translate_ms,
+        "solve_ms": report.solve_ms,
+    });
 
     println!(
         "{}",

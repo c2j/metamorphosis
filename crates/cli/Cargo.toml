@@ -9,6 +9,7 @@ license.workspace = true
 metamorphosis-core = { path = "../core" }
 metamorphosis-qed = { path = "../qed" }
 metamorphosis-rules = { path = "../rules" }
+metamorphosis-verieql = { path = "../verieql" }
 ogsql-parser = { git = "https://github.com/c2j/ogsql-parser" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
