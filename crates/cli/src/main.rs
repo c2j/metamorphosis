@@ -179,12 +179,21 @@ enum Command {
         #[arg(short = 'o', long, default_value = "text")]
         output: String,
     },
+    /// Start MCP server over stdio (for AI assistant integration)
+    Mcp,
 }
 
 fn main() {
-    tracing_subscriber::fmt::init();
-
     let cli = Cli::parse();
+
+    if matches!(cli.command, Command::Mcp) {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_max_level(tracing::Level::WARN)
+            .init();
+    } else {
+        tracing_subscriber::fmt::init();
+    }
 
     match cli.command {
         Command::Rewrite {
@@ -252,6 +261,17 @@ fn main() {
             },
             bound,
         ),
+        Command::Mcp => {
+            if let Err(e) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to create tokio runtime")
+                .block_on(metamorphosis_mcp::run_stdio())
+            {
+                eprintln!("MCP server error: {e}");
+                std::process::exit(1);
+            }
+        },
     }
 }
 

@@ -108,7 +108,7 @@ pub fn parse_sql(sql: &str) -> (Vec<StatementInfo>, Vec<String>) {
 
 /// Pretty-print a single AST statement back to SQL text.
 pub fn format_stmt(stmt: &Statement) -> String {
-    SqlFormatter::new().format_statement(stmt)
+    SqlFormatter::new().pretty_print(true).format_statement(stmt)
 }
 
 /// Convert a [`SchemaMap`] to CREATE TABLE DDL statements.
