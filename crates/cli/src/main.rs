@@ -5,6 +5,7 @@ use metamorphosis_core::{RewriteConfig, RewriteContext, RewriteEngine, RuleRegis
 use ogsql_parser::analyzer::schema::SchemaMap;
 use ogsql_parser::formatter::SqlFormatter;
 use ogsql_parser::{ParseOptions, Parser, StatementInfo};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod provenance;
@@ -56,11 +57,50 @@ impl std::fmt::Display for InputFormat {
     }
 }
 
-fn resolve_input_format(file: &Path, explicit: Option<InputFormat>) -> InputFormat {
-    explicit.unwrap_or_else(|| match file.extension().and_then(|e| e.to_str()) {
-        Some("csv") => InputFormat::Csv,
-        _ => InputFormat::Sql,
+fn resolve_input_format(file: Option<&Path>, explicit: Option<InputFormat>) -> InputFormat {
+    explicit.unwrap_or_else(|| {
+        let p = match file {
+            Some(p) => p,
+            None => return InputFormat::Sql,
+        };
+        match p.extension().and_then(|e| e.to_str()) {
+            Some("csv") => InputFormat::Csv,
+            _ => InputFormat::Sql,
+        }
     })
+}
+
+/// Resolve SQL input from an optional file path.
+/// - None → read stdin
+/// - Some("-") → read stdin
+/// - Some(path) → read file
+/// Returns (sql_content, source_label).
+fn resolve_input(file: &Option<PathBuf>) -> (String, String) {
+    match file {
+        None => {
+            let mut sql = String::new();
+            std::io::stdin().read_to_string(&mut sql).unwrap_or_else(|e| {
+                eprintln!("Error: cannot read from stdin: {}", e);
+                std::process::exit(1);
+            });
+            (sql, "<stdin>".to_string())
+        }
+        Some(p) if p.to_str() == Some("-") => {
+            let mut sql = String::new();
+            std::io::stdin().read_to_string(&mut sql).unwrap_or_else(|e| {
+                eprintln!("Error: cannot read from stdin: {}", e);
+                std::process::exit(1);
+            });
+            (sql, "<stdin>".to_string())
+        }
+        Some(p) => {
+            let sql = std::fs::read_to_string(p).unwrap_or_else(|e| {
+                eprintln!("Error: cannot read '{}': {}", p.display(), e);
+                std::process::exit(1);
+            });
+            (sql, p.to_string_lossy().to_string())
+        }
+    }
 }
 
 #[derive(ClapParser)]
@@ -78,7 +118,8 @@ struct Cli {
 enum Command {
     /// Rewrite SQL using Safe (and optionally Conditional) rules
     Rewrite {
-        file: PathBuf,
+        #[arg(long)]
+        file: Option<PathBuf>,
         #[arg(long)]
         version: Option<String>,
         #[arg(long, conflicts_with = "sql_dir")]
@@ -98,13 +139,16 @@ enum Command {
     },
     /// Generate suggestions using Manual rules (never rewrites)
     Suggest {
-        file: PathBuf,
+        #[arg(long)]
+        file: Option<PathBuf>,
         #[arg(long)]
         version: Option<String>,
         #[arg(long, conflicts_with = "sql_dir")]
         schema: Option<PathBuf>,
         #[arg(long, conflicts_with = "schema")]
         sql_dir: Option<PathBuf>,
+        #[arg(long)]
+        rules: Option<String>,
         #[arg(short = 'o', default_value_t = OutputFormat::Text)]
         output: OutputFormat,
         #[arg(long)]
@@ -116,6 +160,8 @@ enum Command {
         #[arg(long)]
         mybatis: bool,
     },
+    /// List all built-in rules with their metadata
+    ShowRules,
     /// Verify semantic equivalence of two SQL queries using Z3 SMT solver
     Verify {
         /// Original SQL file
@@ -167,6 +213,7 @@ fn main() {
             version,
             schema,
             sql_dir,
+            rules,
             output,
             procedure,
             from_procedure,
@@ -177,12 +224,14 @@ fn main() {
             version.as_deref(),
             schema,
             sql_dir,
+            rules,
             output,
             procedure,
             from_procedure,
             input_format,
             mybatis,
         ),
+        Command::ShowRules => run_show_rules(),
         Command::Verify {
             original,
             rewritten,
@@ -204,13 +253,6 @@ fn main() {
             bound,
         ),
     }
-}
-
-fn load_sql(file: &Path) -> String {
-    std::fs::read_to_string(file).unwrap_or_else(|e| {
-        eprintln!("Error: cannot read '{}': {}", file.display(), e);
-        std::process::exit(1);
-    })
 }
 
 /// Load SQL statements from a CSV file where each record is one SQL statement.
@@ -400,7 +442,7 @@ fn load_procedure_variables(
 
 #[allow(clippy::too_many_arguments)]
 fn run_rewrite(
-    file: PathBuf,
+    file: Option<PathBuf>,
     version: Option<&str>,
     schema_path: Option<PathBuf>,
     sql_dir: Option<PathBuf>,
@@ -414,22 +456,45 @@ fn run_rewrite(
     let engine = build_engine(rules);
 
     if from_procedure {
-        run_rewrite_from_procedure(&file, version, schema.as_ref(), &engine);
+        let file = file.as_deref().unwrap_or_else(|| {
+            eprintln!("Error: procedure mode requires a file argument");
+            std::process::exit(1);
+        });
+        run_rewrite_from_procedure(file, version, schema.as_ref(), &engine);
     } else {
-        let fmt = resolve_input_format(&file, input_format);
+        let resolved_file = file.as_deref();
+        let fmt = resolve_input_format(resolved_file, input_format);
         match fmt {
             InputFormat::Csv => {
-                run_rewrite_csv_file(&file, version, schema.as_ref(), &engine, procedure, mybatis)
+                let csv_file = match file.as_deref() {
+                    Some(p) if p.to_str() != Some("-") => p,
+                    _ => {
+                        eprintln!("Error: CSV input format requires a file argument");
+                        std::process::exit(1);
+                    }
+                };
+                run_rewrite_csv_file(
+                    csv_file,
+                    version,
+                    schema.as_ref(),
+                    &engine,
+                    procedure,
+                    mybatis,
+                )
             }
-            InputFormat::Sql => run_rewrite_sql_file(
-                &file,
-                version,
-                schema.as_ref(),
-                &engine,
-                procedure,
-                sql_dir.as_ref(),
-                mybatis,
-            ),
+            InputFormat::Sql => {
+                let (sql, source_label) = resolve_input(&file);
+                run_rewrite_sql(
+                    &sql,
+                    &source_label,
+                    version,
+                    schema.as_ref(),
+                    &engine,
+                    procedure,
+                    sql_dir.as_ref(),
+                    mybatis,
+                )
+            }
         }
     }
 }
@@ -505,8 +570,9 @@ fn run_rewrite_from_procedure(
     }
 }
 
-fn run_rewrite_sql_file(
-    file: &Path,
+fn run_rewrite_sql(
+    sql: &str,
+    source_label: &str,
     version: Option<&str>,
     schema: Option<&SchemaMap>,
     engine: &RewriteEngine,
@@ -514,7 +580,6 @@ fn run_rewrite_sql_file(
     sql_dir: Option<&PathBuf>,
     mybatis: bool,
 ) {
-    let sql = load_sql(file);
     let known_variables = load_procedure_variables(procedure);
 
     let prov_index = sql_dir
@@ -526,12 +591,12 @@ fn run_rewrite_sql_file(
         version,
         schema,
         config: &config,
-        source_file: Some(file.to_str().unwrap_or("unknown")),
+        source_file: Some(source_label),
         known_variables: known_variables.as_ref(),
     };
 
     let parse_output = Parser::parse_sql_with_options(
-        &sql,
+        sql,
         ParseOptions {
             preserve_comments: false,
             mybatis_params: mybatis,
@@ -550,7 +615,6 @@ fn run_rewrite_sql_file(
         return;
     }
 
-    let source_file_str = file.to_str().unwrap_or("unknown");
     let mut any_rewritten = false;
     for (i, si) in stmt_infos.iter().enumerate() {
         let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
@@ -559,11 +623,11 @@ fn run_rewrite_sql_file(
                 &prov_index,
                 i + 1,
                 si,
-                Some(source_file_str),
+                Some(source_label),
                 stmt_infos.len(),
             )
         } else {
-            provenance::format_stmtinfo_header(i + 1, si, Some(source_file_str), stmt_infos.len())
+            provenance::format_stmtinfo_header(i + 1, si, Some(source_label), stmt_infos.len())
         };
 
         if result.changed {
@@ -589,14 +653,14 @@ fn run_rewrite_sql_file(
                         &prov_index,
                         i + 1,
                         si,
-                        Some(source_file_str),
+                        Some(source_label),
                         stmt_infos.len(),
                     )
                 } else {
                     provenance::format_stmtinfo_header(
                         i + 1,
                         si,
-                        Some(source_file_str),
+                        Some(source_label),
                         stmt_infos.len(),
                     )
                 };
@@ -702,10 +766,11 @@ fn run_rewrite_csv_file(
 
 #[allow(clippy::too_many_arguments)]
 fn run_suggest(
-    file: PathBuf,
+    file: Option<PathBuf>,
     version: Option<&str>,
     schema_path: Option<PathBuf>,
     sql_dir: Option<PathBuf>,
+    rules: Option<String>,
     output: OutputFormat,
     procedure: Option<PathBuf>,
     from_procedure: bool,
@@ -713,33 +778,104 @@ fn run_suggest(
     mybatis: bool,
 ) {
     let schema = load_schema(schema_path, sql_dir.clone());
-    let engine = build_engine(None);
+    let engine = build_engine(rules);
 
     if from_procedure {
-        run_suggest_from_procedure(&file, version, schema.as_ref(), &engine, output);
+        let file = file.as_deref().unwrap_or_else(|| {
+            eprintln!("Error: procedure mode requires a file argument");
+            std::process::exit(1);
+        });
+        run_suggest_from_procedure(file, version, schema.as_ref(), &engine, output);
     } else {
-        let fmt = resolve_input_format(&file, input_format);
+        let resolved_file = file.as_deref();
+        let fmt = resolve_input_format(resolved_file, input_format);
         match fmt {
-            InputFormat::Csv => run_suggest_csv_file(
-                &file,
-                version,
-                schema.as_ref(),
-                &engine,
-                output,
-                procedure,
-                mybatis,
-            ),
-            InputFormat::Sql => run_suggest_sql_file(
-                &file,
-                version,
-                schema.as_ref(),
-                &engine,
-                output,
-                procedure,
-                sql_dir.as_ref(),
-                mybatis,
-            ),
+            InputFormat::Csv => {
+                let csv_file = match file.as_deref() {
+                    Some(p) if p.to_str() != Some("-") => p,
+                    _ => {
+                        eprintln!("Error: CSV input format requires a file argument");
+                        std::process::exit(1);
+                    }
+                };
+                run_suggest_csv_file(
+                    csv_file,
+                    version,
+                    schema.as_ref(),
+                    &engine,
+                    output,
+                    procedure,
+                    mybatis,
+                )
+            }
+            InputFormat::Sql => {
+                let (sql, source_label) = resolve_input(&file);
+                run_suggest_sql(
+                    &sql,
+                    &source_label,
+                    version,
+                    schema.as_ref(),
+                    &engine,
+                    output,
+                    procedure,
+                    sql_dir.as_ref(),
+                    mybatis,
+                )
+            }
         }
+    }
+}
+
+fn run_show_rules() {
+    use metamorphosis_core::RuleCategory;
+    use metamorphosis_core::SafetyLevel;
+
+    let rules = metamorphosis_rules::builtin_rules();
+    println!("{} built-in rules:\n", rules.len());
+
+    let safety_label = |level: &SafetyLevel| -> &'static str {
+        match level {
+            SafetyLevel::Safe => "Safe",
+            SafetyLevel::Conditional => "Conditional",
+            SafetyLevel::Manual => "Manual",
+            _ => "Unknown",
+        }
+    };
+
+    let cat_label = |cat: &RuleCategory| -> &'static str {
+        match cat {
+            RuleCategory::Performance => "perf",
+            RuleCategory::DataQuality => "quality",
+            RuleCategory::Style => "style",
+            RuleCategory::Semantic => "semantic",
+            RuleCategory::Safety => "safety",
+            _ => "other",
+        }
+    };
+
+    let bold = ansi(BOLD);
+    let dim = ansi(DIM);
+    let reset = ansi(RESET);
+
+    for (i, rule) in rules.iter().enumerate() {
+        let cat = cat_label(&rule.category());
+        let sl = safety_label(&rule.safety_level());
+        let sc = color_for_safety(&rule.safety_level());
+
+        println!("  {bold}{}{reset} {bold}{}{reset}", i + 1, rule.id());
+        println!("    {}", rule.description());
+        println!("    {dim}category:{reset} {bold}{cat}{reset}  {dim}safety:{reset} {}{sl}{reset}", ansi(sc));
+        println!();
+    }
+}
+
+fn color_for_safety(level: &metamorphosis_core::SafetyLevel) -> &'static str {
+    use metamorphosis_core::SafetyLevel;
+    match level {
+        SafetyLevel::Safe => GREEN,
+        SafetyLevel::Conditional => YELLOW,
+        SafetyLevel::Manual => RED,
+        _ => DIM,
     }
 }
 
@@ -979,8 +1115,9 @@ fn print_sql_only_suggestion(s: &metamorphosis_core::Suggestion) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_suggest_sql_file(
-    file: &Path,
+fn run_suggest_sql(
+    sql: &str,
+    source_label: &str,
     version: Option<&str>,
     schema: Option<&SchemaMap>,
     engine: &RewriteEngine,
@@ -989,7 +1126,6 @@ fn run_suggest_sql_file(
     sql_dir: Option<&PathBuf>,
     mybatis: bool,
 ) {
-    let sql = load_sql(file);
     let known_variables = load_procedure_variables(procedure);
 
     let prov_index = sql_dir
@@ -1001,12 +1137,12 @@ fn run_suggest_sql_file(
         version,
         schema,
         config: &config,
-        source_file: Some(file.to_str().unwrap_or("unknown")),
+        source_file: Some(source_label),
         known_variables: known_variables.as_ref(),
     };
 
     let parse_output = Parser::parse_sql_with_options(
-        &sql,
+        sql,
         ParseOptions {
             preserve_comments: false,
             mybatis_params: mybatis,
@@ -1025,8 +1161,6 @@ fn run_suggest_sql_file(
         return;
     }
 
-    let source_file_str = file.to_str().unwrap_or("unknown");
-
     match output {
         OutputFormat::Json => {
             let stmts: Vec<_> = stmt_infos.iter().map(|si| si.statement.clone()).collect();
@@ -1043,14 +1177,14 @@ fn run_suggest_sql_file(
                         &prov_index,
                         i + 1,
                         si,
-                        Some(source_file_str),
+                        Some(source_label),
                         stmt_infos.len(),
                     )
                 } else {
                     provenance::format_stmtinfo_header(
                         i + 1,
                         si,
-                        Some(source_file_str),
+                        Some(source_label),
                         stmt_infos.len(),
                     )
                 };
