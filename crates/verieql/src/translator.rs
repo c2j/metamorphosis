@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use ogsql_parser::ast::{
     Expr as OExpr, JoinType as OJoinType, SelectStatement, SelectTarget, SetOperation, Statement,
-    TableRef, WhenClause, WithClause,
+    TableRef, WhenClause,
 };
 
 use crate::ir::*;

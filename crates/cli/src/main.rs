@@ -71,9 +71,10 @@ fn resolve_input_format(file: Option<&Path>, explicit: Option<InputFormat>) -> I
 }
 
 /// Resolve SQL input from an optional file path.
-/// - None → read stdin
-/// - Some("-") → read stdin
-/// - Some(path) → read file
+/// * `None` — read stdin
+/// * `Some("-")` — read stdin
+/// * `Some(path)` — read file
+///
 /// Returns (sql_content, source_label).
 fn resolve_input(file: &Option<PathBuf>) -> (String, String) {
     match file {
@@ -594,6 +595,7 @@ fn run_rewrite_from_procedure(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_rewrite_sql(
     sql: &str,
     source_label: &str,
