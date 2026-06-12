@@ -55,8 +55,16 @@ fn test_cli_rewrite_with_file_flag() {
         str::from_utf8(&output.stderr).unwrap()
     );
     let stdout = str::from_utf8(&output.stdout).unwrap();
-    assert!(stdout.contains("id"), "Should contain 'id', got: {}", stdout);
-    assert!(stdout.contains("name"), "Should contain 'name', got: {}", stdout);
+    assert!(
+        stdout.contains("id"),
+        "Should contain 'id', got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("name"),
+        "Should contain 'name', got: {}",
+        stdout
+    );
 }
 
 /// End-to-end: rewrite a simple SQL file with SELECT *.

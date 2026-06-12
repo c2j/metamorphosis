@@ -55,19 +55,16 @@ pub fn load_schema(
     schema_path: Option<&str>,
     sql_dir: Option<&str>,
 ) -> Result<Option<SchemaMap>, String> {
-    let sources = schema_json.is_some() as u8
-        + schema_path.is_some() as u8
-        + sql_dir.is_some() as u8;
+    let sources =
+        schema_json.is_some() as u8 + schema_path.is_some() as u8 + sql_dir.is_some() as u8;
 
     if sources > 1 {
-        return Err(
-            "schema_json, schema_path, and sql_dir are mutually exclusive".to_string(),
-        );
+        return Err("schema_json, schema_path, and sql_dir are mutually exclusive".to_string());
     }
 
     if let Some(json_str) = schema_json {
-        let map: SchemaMap = serde_json::from_str(json_str)
-            .map_err(|e| format!("invalid schema_json: {e}"))?;
+        let map: SchemaMap =
+            serde_json::from_str(json_str).map_err(|e| format!("invalid schema_json: {e}"))?;
         return Ok(Some(map));
     }
 
@@ -108,7 +105,9 @@ pub fn parse_sql(sql: &str) -> (Vec<StatementInfo>, Vec<String>) {
 
 /// Pretty-print a single AST statement back to SQL text.
 pub fn format_stmt(stmt: &Statement) -> String {
-    SqlFormatter::new().pretty_print(true).format_statement(stmt)
+    SqlFormatter::new()
+        .pretty_print(true)
+        .format_statement(stmt)
 }
 
 /// Convert a [`SchemaMap`] to CREATE TABLE DDL statements.
@@ -139,12 +138,12 @@ fn schema_map_to_verieql(schema: &SchemaMap) -> Vec<TableSchema> {
             name: table_name.clone(),
             columns: columns
                 .iter()
-                .map(|(col_name, col_type)| {
-                    metamorphosis_verieql::types::ColumnDef {
+                .map(
+                    |(col_name, col_type)| metamorphosis_verieql::types::ColumnDef {
                         name: col_name.clone(),
                         col_type: sql_type_to_verieql(col_type),
-                    }
-                })
+                    },
+                )
                 .collect(),
         })
         .collect()
@@ -246,9 +245,7 @@ pub fn list_rules() -> ListRulesResponse {
             default_enabled: r.default_enabled(),
         })
         .collect();
-    ListRulesResponse {
-        rules: rules_info,
-    }
+    ListRulesResponse { rules: rules_info }
 }
 
 /// Rewrite SQL by applying all matching Safe/Conditional rules.
@@ -448,10 +445,16 @@ fn verify_with_qed(params: crate::types::VerifyParams) -> Result<VerifyResponse,
             ("NotEquivalent".to_string(), ce, col_details)
         }
         QedProofResult::Unknown { reason } => ("Unknown".to_string(), Some(reason), None),
-        QedProofResult::Timeout { seconds } => {
-            ("Unknown".to_string(), Some(format!("timeout after {seconds}s")), None)
-        }
-        _ => ("Unknown".to_string(), Some("unexpected proof result".to_string()), None),
+        QedProofResult::Timeout { seconds } => (
+            "Unknown".to_string(),
+            Some(format!("timeout after {seconds}s")),
+            None,
+        ),
+        _ => (
+            "Unknown".to_string(),
+            Some("unexpected proof result".to_string()),
+            None,
+        ),
     };
 
     Ok(VerifyResponse {
@@ -529,8 +532,8 @@ pub fn extract_schema(
         .map_err(|e| format!("schema extraction failed: {e}"))?;
 
     let table_count = schema.len();
-    let schema_value = serde_json::to_value(&schema)
-        .map_err(|e| format!("schema serialization failed: {e}"))?;
+    let schema_value =
+        serde_json::to_value(&schema).map_err(|e| format!("schema serialization failed: {e}"))?;
 
     Ok(ExtractSchemaResponse {
         table_count,

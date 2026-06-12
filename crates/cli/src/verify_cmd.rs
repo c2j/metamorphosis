@@ -152,10 +152,7 @@ fn load_rich_schema(schema_path: Option<PathBuf>, sql_dir: Option<PathBuf>) -> R
 }
 
 /// Load a [`Vec<TableSchema>`] for the VeriEQL engine.
-fn load_verieql_schema(
-    schema_path: Option<PathBuf>,
-    sql_dir: Option<PathBuf>,
-) -> Vec<TableSchema> {
+fn load_verieql_schema(schema_path: Option<PathBuf>, sql_dir: Option<PathBuf>) -> Vec<TableSchema> {
     match (schema_path, sql_dir) {
         (Some(p), None) => load_verieql_schema_from_json(p),
         (None, Some(dir)) => load_verieql_schema_from_dir(dir),

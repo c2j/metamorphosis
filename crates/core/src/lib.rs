@@ -13,6 +13,6 @@ pub use context::{RewriteConfig, RewriteContext};
 pub use engine::RewriteEngine;
 pub use registry::{RewriteRule, RuleRegistry};
 pub use types::{
-    Confidence, MatchFailure, MatchResult, RewriteAction, RewriteResult, RuleCategory,
-    SafetyLevel, Severity, Suggestion,
+    Confidence, MatchFailure, MatchResult, RewriteAction, RewriteResult, RuleCategory, SafetyLevel,
+    Severity, Suggestion,
 };

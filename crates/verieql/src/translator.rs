@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use ogsql_parser::ast::{
-    Expr as OExpr, JoinType as OJoinType, SelectStatement, SelectTarget, SetOperation,
-    Statement, TableRef, WhenClause, WithClause,
+    Expr as OExpr, JoinType as OJoinType, SelectStatement, SelectTarget, SetOperation, Statement,
+    TableRef, WhenClause, WithClause,
 };
 
 use crate::ir::*;
@@ -97,10 +97,7 @@ fn translate_select_inner(
     Ok(rel)
 }
 
-fn translate_from(
-    from: &[TableRef],
-    cte_map: &CteMap,
-) -> Result<Relation, TranslateError> {
+fn translate_from(from: &[TableRef], cte_map: &CteMap) -> Result<Relation, TranslateError> {
     if from.is_empty() {
         return Ok(Relation::Empty);
     }
@@ -126,10 +123,7 @@ fn translate_from(
     Ok(result)
 }
 
-fn translate_table_ref(
-    tref: &TableRef,
-    cte_map: &CteMap,
-) -> Result<Relation, TranslateError> {
+fn translate_table_ref(tref: &TableRef, cte_map: &CteMap) -> Result<Relation, TranslateError> {
     match tref {
         TableRef::Table { name, .. } => {
             let table_name = name.join(".");
@@ -533,14 +527,22 @@ mod tests {
     fn test_natural_join() {
         let sql = "SELECT a FROM t1 NATURAL JOIN t2";
         let result = parse_and_translate(sql);
-        assert!(result.is_ok(), "NATURAL JOIN should parse+translate: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "NATURAL JOIN should parse+translate: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_natural_join_chain() {
         let sql = "SELECT x FROM a NATURAL JOIN b NATURAL JOIN c NATURAL JOIN d";
         let result = parse_and_translate(sql);
-        assert!(result.is_ok(), "chained NATURAL JOIN should parse+translate: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "chained NATURAL JOIN should parse+translate: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -554,7 +556,11 @@ mod tests {
     fn test_cte_with_natural_join() {
         let sql = "WITH s AS (SELECT id FROM takes NATURAL JOIN section) SELECT DISTINCT id FROM s NATURAL JOIN student";
         let result = parse_and_translate(sql);
-        assert!(result.is_ok(), "CTE + NATURAL JOIN should parse+translate: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "CTE + NATURAL JOIN should parse+translate: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -568,41 +574,65 @@ mod tests {
     fn test_coalesce() {
         let sql = "SELECT COALESCE(a, b, 0) FROM t";
         let result = parse_and_translate(sql);
-        assert!(result.is_ok(), "COALESCE should parse+translate: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "COALESCE should parse+translate: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_float_literal() {
         let sql = "SELECT a FROM t WHERE x > 3.14";
         let result = parse_and_translate(sql);
-        assert!(result.is_ok(), "float literal should parse+translate: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "float literal should parse+translate: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_cast_in_where() {
         let sql = "SELECT a FROM t WHERE CAST(x AS INT) > 0";
         let result = parse_and_translate(sql);
-        assert!(result.is_ok(), "CAST in WHERE should parse+translate: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "CAST in WHERE should parse+translate: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_coalesce_in_where() {
         let sql = "SELECT a FROM t WHERE COALESCE(x, 0) = 1";
         let result = parse_and_translate(sql);
-        assert!(result.is_ok(), "COALESCE in WHERE should parse+translate: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "COALESCE in WHERE should parse+translate: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_benchmark_ca6() {
         let sql = "SELECT STUDENT.ID FROM COURSE NATURAL JOIN DEPARTMENT NATURAL JOIN STUDENT NATURAL JOIN TAKES NATURAL JOIN SECTION GROUP BY STUDENT.ID,STUDENT.DEPT_NAME HAVING COUNT(DEPT_NAME) > 1";
         let result = parse_and_translate(sql);
-        assert!(result.is_ok(), "CA6 benchmark should parse+translate: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "CA6 benchmark should parse+translate: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_benchmark_cq9() {
         let sql = "WITH S AS (SELECT ID, TIME_SLOT_ID, YEAR FROM TAKES NATURAL JOIN SECTION GROUP BY ID, TIME_SLOT_ID, YEAR HAVING COUNT(TIME_SLOT_ID)>4) SELECT DISTINCT ID,NAME FROM S NATURAL JOIN STUDENT";
         let result = parse_and_translate(sql);
-        assert!(result.is_ok(), "CQ9 benchmark should parse+translate: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "CQ9 benchmark should parse+translate: {:?}",
+            result
+        );
     }
 }

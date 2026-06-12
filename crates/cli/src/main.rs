@@ -79,18 +79,22 @@ fn resolve_input(file: &Option<PathBuf>) -> (String, String) {
     match file {
         None => {
             let mut sql = String::new();
-            std::io::stdin().read_to_string(&mut sql).unwrap_or_else(|e| {
-                eprintln!("Error: cannot read from stdin: {}", e);
-                std::process::exit(1);
-            });
+            std::io::stdin()
+                .read_to_string(&mut sql)
+                .unwrap_or_else(|e| {
+                    eprintln!("Error: cannot read from stdin: {}", e);
+                    std::process::exit(1);
+                });
             (sql, "<stdin>".to_string())
         }
         Some(p) if p.to_str() == Some("-") => {
             let mut sql = String::new();
-            std::io::stdin().read_to_string(&mut sql).unwrap_or_else(|e| {
-                eprintln!("Error: cannot read from stdin: {}", e);
-                std::process::exit(1);
-            });
+            std::io::stdin()
+                .read_to_string(&mut sql)
+                .unwrap_or_else(|e| {
+                    eprintln!("Error: cannot read from stdin: {}", e);
+                    std::process::exit(1);
+                });
             (sql, "<stdin>".to_string())
         }
         Some(p) => {
@@ -271,7 +275,7 @@ fn main() {
                 eprintln!("MCP server error: {e}");
                 std::process::exit(1);
             }
-        },
+        }
     }
 }
 
@@ -884,7 +888,10 @@ fn run_show_rules() {
 
         println!("  {bold}{}{reset} {bold}{}{reset}", i + 1, rule.id());
         println!("    {}", rule.description());
-        println!("    {dim}category:{reset} {bold}{cat}{reset}  {dim}safety:{reset} {}{sl}{reset}", ansi(sc));
+        println!(
+            "    {dim}category:{reset} {bold}{cat}{reset}  {dim}safety:{reset} {}{sl}{reset}",
+            ansi(sc)
+        );
         println!();
     }
 }

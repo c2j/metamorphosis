@@ -28,10 +28,7 @@ impl MetamorphosisServer {
         description = "Rewrite SQL using Safe and Conditional semantic rules. \
             Returns rewritten SQL statements with match diagnostics."
     )]
-    async fn rewrite_sql(
-        &self,
-        Parameters(params): Parameters<SqlParams>,
-    ) -> String {
+    async fn rewrite_sql(&self, Parameters(params): Parameters<SqlParams>) -> String {
         match tools::rewrite_sql(params) {
             Ok(result) => serde_json::to_string_pretty(&result)
                 .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}")),
@@ -45,10 +42,7 @@ impl MetamorphosisServer {
         description = "Generate data quality probe SQL suggestions using Manual-level rules. \
             Returns probe SQL statements with confidence levels and match diagnostics."
     )]
-    async fn suggest_probes(
-        &self,
-        Parameters(params): Parameters<SqlParams>,
-    ) -> String {
+    async fn suggest_probes(&self, Parameters(params): Parameters<SqlParams>) -> String {
         match tools::suggest_probes(params) {
             Ok(result) => serde_json::to_string_pretty(&result)
                 .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}")),
@@ -74,10 +68,7 @@ impl MetamorphosisServer {
             Supports two engines: 'qed' (default, rich schema constraints) and 'verieql' (bounded verification). \
             Schema is required."
     )]
-    async fn verify_equivalence(
-        &self,
-        Parameters(params): Parameters<VerifyParams>,
-    ) -> String {
+    async fn verify_equivalence(&self, Parameters(params): Parameters<VerifyParams>) -> String {
         match tools::verify_equivalence(params) {
             Ok(result) => serde_json::to_string_pretty(&result)
                 .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}")),
@@ -92,10 +83,7 @@ impl MetamorphosisServer {
             of DDL SQL files. Returns a JSON schema map suitable for use with \
             rewrite_sql and suggest_probes."
     )]
-    async fn extract_schema(
-        &self,
-        Parameters(params): Parameters<ExtractSchemaParams>,
-    ) -> String {
+    async fn extract_schema(&self, Parameters(params): Parameters<ExtractSchemaParams>) -> String {
         match tools::extract_schema(params) {
             Ok(result) => serde_json::to_string_pretty(&result)
                 .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}")),

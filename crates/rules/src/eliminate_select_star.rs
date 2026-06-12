@@ -47,10 +47,7 @@ impl RewriteRule for EliminateSelectStar {
                 }
             }
             _ => MatchResult::NotMatched {
-                reason: format!(
-                    "Statement is {} (not SELECT)",
-                    stmt_type_label(stmt)
-                ),
+                reason: format!("Statement is {} (not SELECT)", stmt_type_label(stmt)),
             },
         }
     }

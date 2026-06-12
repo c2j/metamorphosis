@@ -12,9 +12,7 @@
 //! Safety guards: only rewrites single-table subqueries without GROUP BY,
 //! HAVING, set operations, or JOINs inside the subquery.
 
-use metamorphosis_core::types::{
-    MatchResult, RewriteAction, RuleCategory, SafetyLevel, Severity,
-};
+use metamorphosis_core::types::{MatchResult, RewriteAction, RuleCategory, SafetyLevel, Severity};
 use metamorphosis_core::{RewriteContext, RewriteRule};
 use ogsql_parser::ast::{
     Expr, JoinType, SelectStatement, SelectTarget, Spanned, Statement, TableRef,

@@ -77,12 +77,18 @@ impl EqPredicateCollector {
         match (left, right) {
             (
                 Expr::ColumnRef(name),
-                Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::MyBatisRawExpr(_) | Expr::JdbcParam,
+                Expr::Parameter(_)
+                | Expr::MyBatisParam(_)
+                | Expr::MyBatisRawExpr(_)
+                | Expr::JdbcParam,
             ) => {
                 self.tier1.push(name.clone());
             }
             (
-                Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::MyBatisRawExpr(_) | Expr::JdbcParam,
+                Expr::Parameter(_)
+                | Expr::MyBatisParam(_)
+                | Expr::MyBatisRawExpr(_)
+                | Expr::JdbcParam,
                 Expr::ColumnRef(name),
             ) => {
                 self.tier1.push(name.clone());
@@ -287,7 +293,9 @@ fn collect_table_aliases_recursive(tr: &TableRef, aliases: &mut HashSet<String>)
 
 pub(crate) fn contains_param(expr: &Expr) -> bool {
     match expr {
-        Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::MyBatisRawExpr(_) | Expr::JdbcParam => true,
+        Expr::Parameter(_) | Expr::MyBatisParam(_) | Expr::MyBatisRawExpr(_) | Expr::JdbcParam => {
+            true
+        }
         Expr::BinaryOp { left, right, .. } => contains_param(left) || contains_param(right),
         Expr::UnaryOp { expr, .. } => contains_param(expr),
         Expr::Parenthesized(inner) => contains_param(inner),

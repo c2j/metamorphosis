@@ -1,10 +1,13 @@
-use metamorphosis_mcp::types::*;
 use metamorphosis_mcp::tools;
+use metamorphosis_mcp::types::*;
 
 #[test]
 fn list_rules_returns_builtin_rules() {
     let result = tools::list_rules();
-    assert!(!result.rules.is_empty(), "should have at least one builtin rule");
+    assert!(
+        !result.rules.is_empty(),
+        "should have at least one builtin rule"
+    );
 
     let ids: Vec<&str> = result.rules.iter().map(|r| r.id.as_str()).collect();
     assert!(
@@ -111,5 +114,9 @@ fn rewrite_with_schema_path_and_sql_dir() {
         rules: None,
     };
     let result = tools::rewrite_sql(params);
-    assert!(result.is_ok(), "rewrite with schema should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "rewrite with schema should succeed: {:?}",
+        result
+    );
 }
