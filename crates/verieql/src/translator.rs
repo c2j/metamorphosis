@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use ogsql_parser::ast::{
-    Expr as OExpr, JoinType as OJoinType, SelectStatement, SelectTarget, SetOperation, Statement,
-    TableRef, WhenClause,
+    Expr as OExpr, JoinType as OJoinType, SelectStatement, SelectTarget, SetOperation,
+    Statement, TableRef, WhenClause, WithClause,
 };
 
 use crate::ir::*;
@@ -20,13 +22,40 @@ pub enum TranslateError {
 /// Translate an ogsql-parser Statement into VeriEql IR.
 pub fn translate(stmt: &Statement) -> Result<Relation, TranslateError> {
     match stmt {
-        Statement::Select(s) => translate_select(s),
+        Statement::Select(s) => translate_select_with_ctes(s, &CteMap::new()),
         _ => Err(TranslateError::UnsupportedStatement),
     }
 }
 
 fn translate_select(s: &SelectStatement) -> Result<Relation, TranslateError> {
-    let mut rel = translate_from(&s.from)?;
+    translate_select_with_ctes(s, &CteMap::new())
+}
+
+type CteMap = HashMap<String, Relation>;
+
+fn translate_select_with_ctes(
+    s: &SelectStatement,
+    outer_ctes: &CteMap,
+) -> Result<Relation, TranslateError> {
+    let cte_map = {
+        let mut map = outer_ctes.clone();
+        if let Some(ref wc) = s.with {
+            for cte in &wc.ctes {
+                let rel = translate_select_inner(&cte.query, &map)?;
+                map.insert(cte.name.to_lowercase(), rel);
+            }
+        }
+        map
+    };
+
+    translate_select_inner(s, &cte_map)
+}
+
+fn translate_select_inner(
+    s: &SelectStatement,
+    cte_map: &CteMap,
+) -> Result<Relation, TranslateError> {
+    let mut rel = translate_from(&s.from, cte_map)?;
 
     if let Some(ref cond) = s.where_clause {
         rel = Relation::Filter {
@@ -62,20 +91,23 @@ fn translate_select(s: &SelectStatement) -> Result<Relation, TranslateError> {
     }
 
     if let Some(ref set_op) = s.set_operation {
-        rel = translate_set_op(set_op, rel)?;
+        rel = translate_set_op(set_op, rel, cte_map)?;
     }
 
     Ok(rel)
 }
 
-fn translate_from(from: &[TableRef]) -> Result<Relation, TranslateError> {
+fn translate_from(
+    from: &[TableRef],
+    cte_map: &CteMap,
+) -> Result<Relation, TranslateError> {
     if from.is_empty() {
         return Ok(Relation::Empty);
     }
 
     let mut rels: Vec<Relation> = Vec::new();
     for tref in from {
-        rels.push(translate_table_ref(tref)?);
+        rels.push(translate_table_ref(tref, cte_map)?);
     }
 
     if rels.len() == 1 {
@@ -94,26 +126,34 @@ fn translate_from(from: &[TableRef]) -> Result<Relation, TranslateError> {
     Ok(result)
 }
 
-fn translate_table_ref(tref: &TableRef) -> Result<Relation, TranslateError> {
+fn translate_table_ref(
+    tref: &TableRef,
+    cte_map: &CteMap,
+) -> Result<Relation, TranslateError> {
     match tref {
         TableRef::Table { name, .. } => {
             let table_name = name.join(".");
+            if let Some(cte_rel) = cte_map.get(&table_name.to_lowercase()) {
+                return Ok(cte_rel.clone());
+            }
             Ok(Relation::BaseTable {
                 name: table_name.clone(),
                 columns: Vec::new(),
                 tuple_count: 0,
             })
         }
-        TableRef::Subquery { query, .. } => translate_select(query),
+        TableRef::Subquery { query, .. } => translate_select_with_ctes(query, cte_map),
         TableRef::Join {
             left,
             right,
             join_type,
             condition,
+            natural,
+            using_columns,
             ..
         } => {
-            let l = translate_table_ref(left)?;
-            let r = translate_table_ref(right)?;
+            let l = translate_table_ref(left, cte_map)?;
+            let r = translate_table_ref(right, cte_map)?;
             let jt = match join_type {
                 OJoinType::Inner => JoinType::Inner,
                 OJoinType::Left => JoinType::Left,
@@ -121,16 +161,61 @@ fn translate_table_ref(tref: &TableRef) -> Result<Relation, TranslateError> {
                 OJoinType::Full => JoinType::Full,
                 OJoinType::Cross => JoinType::Cross,
             };
+
+            let cond = if *natural && !using_columns.is_empty() {
+                Some(build_using_condition(using_columns)?)
+            } else if *natural {
+                condition.as_ref().map(translate_expr).transpose()?
+            } else if !using_columns.is_empty() {
+                Some(build_using_condition(using_columns)?)
+            } else {
+                condition.as_ref().map(translate_expr).transpose()?
+            };
+
             Ok(Relation::Join {
                 left: Box::new(l),
                 right: Box::new(r),
                 join_type: jt,
-                condition: condition.as_ref().map(translate_expr).transpose()?,
+                condition: cond,
             })
         }
         TableRef::Values { .. } => Ok(Relation::Values { rows: Vec::new() }),
         _ => Err(TranslateError::UnsupportedJoin),
     }
+}
+
+fn build_using_condition(columns: &[String]) -> Result<Expr, TranslateError> {
+    let mut parts: Vec<Expr> = Vec::new();
+    for col in columns {
+        parts.push(Expr::BinaryOp {
+            op: BinOp::Eq,
+            left: Box::new(Expr::ColumnRef {
+                table: None,
+                column: col.clone(),
+            }),
+            right: Box::new(Expr::ColumnRef {
+                table: None,
+                column: col.clone(),
+            }),
+        });
+    }
+    if parts.is_empty() {
+        return Err(TranslateError::UnsupportedExpr(
+            "NATURAL/USING join with no columns".into(),
+        ));
+    }
+    if parts.len() == 1 {
+        return Ok(parts.pop().unwrap());
+    }
+    let mut result = parts.remove(0);
+    for p in parts {
+        result = Expr::BinaryOp {
+            op: BinOp::And,
+            left: Box::new(result),
+            right: Box::new(p),
+        };
+    }
+    Ok(result)
 }
 
 fn translate_targets(
@@ -189,10 +274,14 @@ fn translate_group_by(
     })
 }
 
-fn translate_set_op(op: &SetOperation, left: Relation) -> Result<Relation, TranslateError> {
+fn translate_set_op(
+    op: &SetOperation,
+    left: Relation,
+    cte_map: &CteMap,
+) -> Result<Relation, TranslateError> {
     match op {
         SetOperation::Union { all, right } => {
-            let r = translate_select(right)?;
+            let r = translate_select_inner(right, cte_map)?;
             Ok(Relation::Union {
                 left: Box::new(left),
                 right: Box::new(r),
@@ -200,7 +289,7 @@ fn translate_set_op(op: &SetOperation, left: Relation) -> Result<Relation, Trans
             })
         }
         SetOperation::Intersect { all, right } => {
-            let r = translate_select(right)?;
+            let r = translate_select_inner(right, cte_map)?;
             Ok(Relation::Intersect {
                 left: Box::new(left),
                 right: Box::new(r),
@@ -208,7 +297,7 @@ fn translate_set_op(op: &SetOperation, left: Relation) -> Result<Relation, Trans
             })
         }
         SetOperation::Except { all, right } => {
-            let r = translate_select(right)?;
+            let r = translate_select_inner(right, cte_map)?;
             Ok(Relation::Except {
                 left: Box::new(left),
                 right: Box::new(r),
@@ -224,6 +313,10 @@ fn translate_expr(expr: &OExpr) -> Result<Expr, TranslateError> {
             use ogsql_parser::ast::Literal;
             match lit {
                 Literal::Integer(v) => Ok(Expr::Literal(ExprValue::Integer(*v))),
+                Literal::Float(v) => Ok(v
+                    .parse::<f64>()
+                    .map(|f| Expr::Literal(ExprValue::Float(f)))
+                    .unwrap_or_else(|_| Expr::Literal(ExprValue::Integer(0)))),
                 Literal::String(v) => Ok(Expr::Literal(ExprValue::String(v.clone()))),
                 Literal::Boolean(v) => Ok(Expr::Literal(ExprValue::Boolean(*v))),
                 Literal::Null => Ok(Expr::SqlNull),
@@ -378,6 +471,7 @@ fn translate_expr(expr: &OExpr) -> Result<Expr, TranslateError> {
             })
         }
         OExpr::Parenthesized(inner) => translate_expr(inner),
+        OExpr::TypeCast { expr: inner, .. } => translate_expr(inner),
         _ => Err(TranslateError::UnsupportedExpr(format!("{:?}", expr))),
     }
 }
@@ -421,5 +515,94 @@ fn extract_agg_arg(expr: &OExpr) -> Option<Expr> {
         args.first().and_then(|a| translate_expr(a).ok())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_and_translate(sql: &str) -> Result<Relation, TranslateError> {
+        let tokens = ogsql_parser::Tokenizer::new(sql).tokenize().unwrap();
+        let stmts = ogsql_parser::parser::Parser::new(tokens).parse();
+        let stmt = stmts.into_iter().next().unwrap();
+        translate(&stmt)
+    }
+
+    #[test]
+    fn test_natural_join() {
+        let sql = "SELECT a FROM t1 NATURAL JOIN t2";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "NATURAL JOIN should parse+translate: {:?}", result);
+    }
+
+    #[test]
+    fn test_natural_join_chain() {
+        let sql = "SELECT x FROM a NATURAL JOIN b NATURAL JOIN c NATURAL JOIN d";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "chained NATURAL JOIN should parse+translate: {:?}", result);
+    }
+
+    #[test]
+    fn test_cte() {
+        let sql = "WITH cte AS (SELECT id FROM users) SELECT * FROM cte";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "CTE should parse+translate: {:?}", result);
+    }
+
+    #[test]
+    fn test_cte_with_natural_join() {
+        let sql = "WITH s AS (SELECT id FROM takes NATURAL JOIN section) SELECT DISTINCT id FROM s NATURAL JOIN student";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "CTE + NATURAL JOIN should parse+translate: {:?}", result);
+    }
+
+    #[test]
+    fn test_cast() {
+        let sql = "SELECT CAST(x AS INTEGER) FROM t";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "CAST should parse+translate: {:?}", result);
+    }
+
+    #[test]
+    fn test_coalesce() {
+        let sql = "SELECT COALESCE(a, b, 0) FROM t";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "COALESCE should parse+translate: {:?}", result);
+    }
+
+    #[test]
+    fn test_float_literal() {
+        let sql = "SELECT a FROM t WHERE x > 3.14";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "float literal should parse+translate: {:?}", result);
+    }
+
+    #[test]
+    fn test_cast_in_where() {
+        let sql = "SELECT a FROM t WHERE CAST(x AS INT) > 0";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "CAST in WHERE should parse+translate: {:?}", result);
+    }
+
+    #[test]
+    fn test_coalesce_in_where() {
+        let sql = "SELECT a FROM t WHERE COALESCE(x, 0) = 1";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "COALESCE in WHERE should parse+translate: {:?}", result);
+    }
+
+    #[test]
+    fn test_benchmark_ca6() {
+        let sql = "SELECT STUDENT.ID FROM COURSE NATURAL JOIN DEPARTMENT NATURAL JOIN STUDENT NATURAL JOIN TAKES NATURAL JOIN SECTION GROUP BY STUDENT.ID,STUDENT.DEPT_NAME HAVING COUNT(DEPT_NAME) > 1";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "CA6 benchmark should parse+translate: {:?}", result);
+    }
+
+    #[test]
+    fn test_benchmark_cq9() {
+        let sql = "WITH S AS (SELECT ID, TIME_SLOT_ID, YEAR FROM TAKES NATURAL JOIN SECTION GROUP BY ID, TIME_SLOT_ID, YEAR HAVING COUNT(TIME_SLOT_ID)>4) SELECT DISTINCT ID,NAME FROM S NATURAL JOIN STUDENT";
+        let result = parse_and_translate(sql);
+        assert!(result.is_ok(), "CQ9 benchmark should parse+translate: {:?}", result);
     }
 }

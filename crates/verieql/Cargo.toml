@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+vendored = ["z3/vendored"]
+
 [dependencies]
 ogsql-parser = { git = "https://github.com/c2j/ogsql-parser" }
 z3 = { version = "0.20", features = ["vendored"] }

@@ -1,2 +1,13 @@
-# Z3 is now vendored (statically linked) — no system Z3 paths needed.
+# Z3 is vendored (statically linked) for Linux deployment.
 # cmake is required for building: brew install cmake (macOS) / apt install cmake (Linux)
+#
+# macOS note: The vendored Z3 static library contains C++ global constructors
+# (__GLOBAL__sub_I_*) that may cause slow startup (several seconds) on macOS
+# due to dyld initialization of a ~1.2GB static archive. This is a macOS-only
+# issue — Linux static linking works without problems.
+#
+# If macOS development is too slow, use dynamic linking instead:
+#   cargo build -p metamorphosis-verieql --no-default-features --features default
+# (requires: brew install z3, working pkg-config)
+#
+# For production Linux builds, always use vendored (default).
