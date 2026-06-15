@@ -164,11 +164,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-gnu
-
-      - name: Install MinGW-w64
-        run: choco install mingw -y --no-progress
-        shell: pwsh
+          targets: x86_64-pc-windows-msvc
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -177,24 +173,19 @@ jobs:
             C:\cargo\registry
             C:\cargo\git
             target
-          key: x86_64-pc-windows-gnu-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: x86_64-pc-windows-gnu-cargo-
+          key: x86_64-pc-windows-msvc-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: x86_64-pc-windows-msvc-cargo-
 
       - name: Build
-        run: cargo build --release --target x86_64-pc-windows-gnu
+        run: cargo build --release --target x86_64-pc-windows-msvc
         env:
           RUSTFLAGS: "-C target-feature=+crt-static"
-          CMAKE_GENERATOR: "MinGW Makefiles"
-
-      - name: Strip
-        run: strip target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe
-        shell: bash
 
       - name: Package
         shell: pwsh
         run: |
           Compress-Archive `
-            -Path "target/x86_64-pc-windows-gnu/release/${{ env.BINARY_NAME }}.exe" `
+            -Path "target/x86_64-pc-windows-msvc/release/${{ env.BINARY_NAME }}.exe" `
             -DestinationPath "${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-windows-x86_64.zip"
 
       - name: Upload artifact
