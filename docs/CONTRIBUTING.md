@@ -1,3 +1,94 @@
+# 项目结构与贡献指南
+
+本文档描述 Metamorphosis 项目的仓库布局、crate 依赖关系、规则开发流程、测试策略以及提交规范。请在阅读下方的强制编码规则前先熟悉本节内容。
+
+---
+
+## Workspace 布局
+
+```
+metamorphosis/
+├── crates/
+│   ├── core/        # 引擎 + 抽象（types, traits, context, registry, engine, extractor）
+│   ├── rules/       # 4 个内置重写规则 + eq_analyzer 共享模块
+│   ├── cli/         # CLI 入口（5 个子命令：rewrite/suggest/show-rules/verify/mcp）
+│   ├── qed/         # QED 离线验证（嵌入式 Z3，rich schema）
+│   ├── verieql/     # 有界等价验证（独立，零 metamorphosis 依赖）
+│   └── mcp-server/  # MCP 服务器（5 个工具，stdio 传输）
+├── docs/            # 设计文档、贡献指南、最佳实践、实现计划
+├── scripts/         # 安装脚本（install-qed-prover.sh, run-qed-verify.sh）
+├── testcases/       # 手动测试用例
+└── Cargo.toml       # Workspace 根配置
+```
+
+## 依赖关系（禁止反向依赖）
+
+```
+cli ──► rules ──► core ──► ogsql-parser
+  └──► qed ──► core
+  └──► mcp-server ──► rules, qed, verieql, core
+
+verieql ──► ogsql-parser (独立，不依赖任何 metamorphosis crate)
+```
+
+关键约束：
+
+- `core` 零外部 IO 依赖。
+- `verieql` 完全独立，仅依赖 `ogsql-parser` 与 `z3`。
+- `mcp-server` 依赖所有其他业务 crate。
+- **禁止任何反向依赖**。
+
+## 如何添加新规则
+
+1. 在 `crates/rules/src/` 创建新文件，实现 `RewriteRule` trait。
+2. 必须实现的方法：`id()`、`description()`、`category()`、`safety_level()`、`matches() -> MatchResult`、`apply() -> Option<RewriteAction>`。
+3. 可选覆盖：`default_enabled() -> bool`。
+4. 在 `crates/rules/src/lib.rs` 中注册。
+5. 在 `crates/rules/tests/` 添加测试。
+6. 如果规则产生 `Replace` 动作，建议添加 QED 等价性验证测试。
+
+最小规则骨架：
+
+```rust
+use metamorphosis_core::{RewriteRule, RewriteContext, RewriteAction, SafetyLevel, RuleCategory, MatchResult};
+
+#[derive(Debug)]
+pub struct MyRule;
+
+impl RewriteRule for MyRule {
+    fn id(&self) -> &'static str { "my-rule" }
+    fn description(&self) -> &'static str { "描述" }
+    fn category(&self) -> RuleCategory { RuleCategory::Semantic }
+    fn safety_level(&self) -> SafetyLevel { SafetyLevel::Safe }
+    fn matches(&self, _ctx: &RewriteContext, stmt: &Statement) -> MatchResult {
+        // 匹配逻辑
+        MatchResult::Matched
+    }
+    fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Option<RewriteAction> {
+        // 重写逻辑
+        None
+    }
+}
+```
+
+## 测试策略
+
+- 测试金字塔：50% 规则单元测试，30% 引擎单元测试，20% 集成测试。
+- 每个规则必须有独立的测试文件 `crates/rules/tests/`。
+- Safe / Conditional 规则建议配合 QED E2E 测试验证语义等价性。
+- 使用 `cargo test --workspace` 运行全部测试。
+- QED E2E 测试运行：`scripts/run-qed-verify.sh`。
+
+## 提交规范
+
+- 采用 Conventional Commits：`feat:`、`fix:`、`docs:`、`test:`、`refactor:`、`chore:`、`style:`。
+- 示例：`feat(rules): add eliminate-join-elimination rule`。
+- `cargo fmt` 必须通过。
+- `cargo clippy -- -D warnings` 必须通过。
+- `Cargo.lock` 必须提交。
+
+---
+
 # 文档一：必须遵循的规则（Mandatory）
 
 > **底线要求。不遵守这些规则将直接影响代码安全、可维护性、团队协作效率或生产稳定性。必须在 Code Review 和 CI 中强制检查。**
@@ -156,3 +247,13 @@
 
 1. **文档一（必须遵循）**应直接写入团队的 `CONTRIBUTING.md`，并在 CI 中配置对应的检查工具（`rustfmt`、`clippy`、`cargo-deny`、`cargo-semver-checks` 等）。
 2. 文档应**每半年评审一次**，根据项目演进和 Rust 生态发展进行更新。
+
+---
+
+## 相关文档
+
+- 设计文档：`docs/metamorphosis_design_doc.md`
+- 最佳实践：`docs/BEST-PRATICE.md`
+- 用户手册：`docs/UserGuide.md`
+- 开发者指南：`docs/DeveloperGuide.md`
+- QED 理论：`docs/QED.md`
