@@ -106,6 +106,57 @@ pub struct ExtractSchemaResponse {
     pub schema: serde_json::Value,
 }
 
+/// Parameters for the inline_sql MCP tool.
+///
+/// Replaces parameter placeholders in SQL with literal values to produce
+/// directly executable SQL. Supports named parameters (MyBatis #{name},
+/// stored procedure variables), positional parameters (JDBC ?), and
+/// numbered parameters ($1, $2).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct InlineSqlParams {
+    /// SQL text (supports multiple statements).
+    pub sql: String,
+    /// Named parameters: {"status": "active", "count": 42, "flag": true, "note": null}.
+    #[serde(default)]
+    pub named: std::collections::HashMap<String, serde_json::Value>,
+    /// Positional parameters for JDBC ? (in order): ["en", 1, null, true].
+    #[serde(default)]
+    pub positional: Vec<serde_json::Value>,
+    /// Enable MyBatis #{name} / ${name} parsing.
+    #[serde(default)]
+    pub mybatis: bool,
+    /// Known variable names for stored procedure mode (distinguishes variables
+    /// from column names). Required to safely replace bare identifiers
+    /// (Expr::ColumnRef) that are actually PL/pgSQL variables.
+    pub known_variables: Option<Vec<String>>,
+}
+
+/// Response from the inline_sql tool.
+#[derive(Debug, Serialize)]
+pub struct InlineResponse {
+    /// Inlined SQL statements (one per input statement).
+    pub inlined_sql: Vec<String>,
+    /// Total number of parameters replaced across all statements.
+    pub total_replaced: usize,
+    /// Placeholders that were NOT replaced (no matching parameter value).
+    pub remaining_placeholders: Vec<RemainingPlaceholderInfo>,
+    /// Parse warnings.
+    pub warnings: Vec<String>,
+}
+
+/// Information about a placeholder that was not replaced.
+#[derive(Debug, Serialize)]
+pub struct RemainingPlaceholderInfo {
+    /// Kind: "jdbc" | "mybatis" | "parameter" | "variable".
+    pub kind: String,
+    /// Parameter name (for named params) or None (for positional).
+    pub name: Option<String>,
+    /// Position index (for positional params).
+    pub position: Option<usize>,
+    /// Which statement (0-indexed) this placeholder belongs to.
+    pub statement_index: usize,
+}
+
 /// Error response body.
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {

@@ -30,14 +30,16 @@ use metamorphosis_verieql::types::{
     Bound, ColumnType, ProofResult as VerieqlProofResult, Semantics, TableSchema,
 };
 use metamorphosis_verieql::VeriEql;
+use metamorphosis_core::inline::{inline_statement, InlineParams, InlineValue};
 use ogsql_parser::analyzer::schema::SchemaMap;
 use ogsql_parser::ast::{Statement, StatementInfo};
 use ogsql_parser::formatter::SqlFormatter;
-use ogsql_parser::{Parser, ParserError};
+use ogsql_parser::{Parser, ParserError, ParseOptions};
 
 use crate::types::{
-    ExtractSchemaResponse, ListRulesResponse, MatchFailureInfo, RewriteResponse, RuleInfo,
-    SuggestResponse, SuggestionInfo, VerifyResponse,
+    ExtractSchemaResponse, InlineResponse, ListRulesResponse, MatchFailureInfo,
+    RemainingPlaceholderInfo, RewriteResponse, RuleInfo, SuggestResponse,
+    SuggestionInfo, VerifyResponse,
 };
 
 // ── Helper functions ──────────────────────────────────────────────────────
@@ -539,4 +541,53 @@ pub fn extract_schema(
         table_count,
         schema: schema_value,
     })
+}
+
+pub fn inline_sql(params: crate::types::InlineSqlParams) -> Result<InlineResponse, String> {
+    let inline_params = InlineParams {
+        named: params.named.iter().map(|(k, v)| (k.clone(), json_to_inline_value(v))).collect(),
+        positional: params.positional.iter().map(json_to_inline_value).collect(),
+    };
+    let known_vars = params.known_variables.map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
+    let (stmt_infos, warnings) = if params.mybatis {
+        let output = Parser::parse_sql_with_options(&params.sql, ParseOptions {
+            preserve_comments: false, mybatis_params: true,
+        });
+        let warnings: Vec<String> = output.errors.iter().filter(|e| is_warning(e)).map(|e| e.to_string()).collect();
+        (output.statements, warnings)
+    } else {
+        parse_sql(&params.sql)
+    };
+    let stmts: Vec<Statement> = stmt_infos.into_iter().map(|si| si.statement).collect();
+    let mut inlined_sql = Vec::new();
+    let mut total_replaced = 0;
+    let mut all_remaining = Vec::new();
+    for (idx, stmt) in stmts.iter().enumerate() {
+        let result = inline_statement(stmt, &inline_params, known_vars.as_ref());
+        inlined_sql.push(format_stmt(&result.statement));
+        total_replaced += result.replaced_named + result.replaced_positional;
+        all_remaining.extend(result.remaining.into_iter().map(|r| RemainingPlaceholderInfo {
+            kind: r.kind.to_string(),
+            name: r.name,
+            position: r.position,
+            statement_index: idx,
+        }));
+    }
+    Ok(InlineResponse { inlined_sql, total_replaced, remaining_placeholders: all_remaining, warnings })
+}
+
+fn json_to_inline_value(v: &serde_json::Value) -> InlineValue {
+    match v {
+        serde_json::Value::Null => InlineValue::Null,
+        serde_json::Value::Bool(b) => InlineValue::Boolean(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                InlineValue::Integer(i)
+            } else {
+                InlineValue::Float(n.to_string())
+            }
+        }
+        serde_json::Value::String(s) => InlineValue::String(s.clone()),
+        _ => InlineValue::String(v.to_string()),
+    }
 }

@@ -8,7 +8,8 @@ use ogsql_parser::{ParseOptions, Parser, StatementInfo};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-mod provenance;
+mod inline_cmd;
+pub(crate) mod provenance;
 mod verify_cmd;
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -184,6 +185,28 @@ enum Command {
         #[arg(short = 'o', long, default_value = "text")]
         output: String,
     },
+    /// Replace parameters/placeholders with literal values to produce executable SQL
+    Inline {
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Named parameter (repeatable): --param status=active
+        #[arg(long = "param")]
+        params_named: Vec<String>,
+        /// Positional parameter value in order (repeatable): --val active --val 1
+        #[arg(long = "val")]
+        params_positional: Vec<String>,
+        /// Load parameters from JSON file
+        #[arg(long)]
+        params_file: Option<PathBuf>,
+        #[arg(long)]
+        mybatis: bool,
+        #[arg(long)]
+        procedure: Option<PathBuf>,
+        #[arg(long)]
+        from_procedure: bool,
+        #[arg(short = 'o', long = "output", default_value_t = OutputFormat::SqlOnly)]
+        output: OutputFormat,
+    },
     /// Start MCP server over stdio (for AI assistant integration)
     Mcp,
 }
@@ -265,6 +288,25 @@ fn main() {
                 VerifyEngine::Verieql => verify_cmd::Engine::Verieql,
             },
             bound,
+        ),
+        Command::Inline {
+            file,
+            params_named,
+            params_positional,
+            params_file,
+            mybatis,
+            procedure,
+            from_procedure,
+            output,
+        } => inline_cmd::run_inline(
+            file,
+            params_named,
+            params_positional,
+            params_file,
+            mybatis,
+            procedure,
+            from_procedure,
+            output,
         ),
         Command::Mcp => {
             if let Err(e) = tokio::runtime::Builder::new_current_thread()
@@ -454,7 +496,7 @@ fn build_engine(rules_opt: Option<String>) -> RewriteEngine {
     RewriteEngine::new(registry)
 }
 
-fn load_procedure_variables(
+pub(crate) fn load_procedure_variables(
     procedure: Option<PathBuf>,
 ) -> Option<std::collections::HashSet<String>> {
     let path = procedure?;

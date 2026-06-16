@@ -91,6 +91,21 @@ impl MetamorphosisServer {
                 .unwrap_or_else(|_| r#"{"error": "unknown error"}"#.to_string()),
         }
     }
+
+    #[rmcp::tool(
+        name = "inline_sql",
+        description = "Replace SQL parameters and placeholders with literal values \
+            to produce directly executable SQL. Supports named params (MyBatis #{name}, \
+            stored procedure variables), positional params (JDBC ?), and numbered params ($1)."
+    )]
+    async fn inline_sql(&self, Parameters(params): Parameters<InlineSqlParams>) -> String {
+        match tools::inline_sql(params) {
+            Ok(result) => serde_json::to_string_pretty(&result)
+                .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {e}\"}}")),
+            Err(e) => serde_json::to_string_pretty(&ErrorResponse { error: e })
+                .unwrap_or_else(|_| r#"{"error": "unknown error"}"#.to_string()),
+        }
+    }
 }
 
 #[rmcp::tool_handler]
