@@ -7,7 +7,7 @@
 use crate::ir::{QedAggArg, QedAggCall, QedExpr, QedRelation, QedValue};
 use crate::schema::RichSchema;
 use ogsql_parser::ast::{
-    Expr, GroupByItem, Literal, SelectStatement, SelectTarget, SetOperation, Statement, TableRef,
+    Expr, GroupByItem, Ident, Literal, SelectStatement, SelectTarget, SetOperation, Statement, TableRef,
 };
 
 // ── Error type ───────────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ fn expr_column_name(expr: &Expr) -> String {
     match expr {
         Expr::ColumnRef(name) => name
             .last()
-            .cloned()
+            .map(|i| i.as_str().to_string())
             .unwrap_or_else(|| "?column?".to_string()),
         _ => "?column?".to_string(),
     }
@@ -168,11 +168,11 @@ fn map_binop(op: &str) -> String {
     .to_string()
 }
 
-fn split_column_ref(name: &[String]) -> (Option<&str>, &str) {
+fn split_column_ref(name: &[Ident]) -> (Option<&str>, &str) {
     match name.len() {
-        1 => (None, &name[0]),
-        2 => (Some(&name[0]), &name[1]),
-        _ => (Some(&name[name.len() - 2]), &name[name.len() - 1]),
+        1 => (None, name[0].as_str()),
+        2 => (Some(name[0].as_str()), name[1].as_str()),
+        _ => (Some(name[name.len() - 2].as_str()), name[name.len() - 1].as_str()),
     }
 }
 

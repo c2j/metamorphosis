@@ -5,7 +5,7 @@
 //! [`ExtractCandidateValues`](crate::extract_candidate_values) to identify
 //! parameterized vs. literal equality conditions in WHERE clauses.
 
-use ogsql_parser::ast::{Expr, SelectStatement, TableRef};
+use ogsql_parser::ast::{Expr, Ident, ObjectName, SelectStatement, TableRef};
 use std::collections::HashSet;
 
 /// Collected equality predicate information from a WHERE clause.
@@ -13,7 +13,7 @@ pub(crate) struct EqPredicateCollector {
     /// Column references with parameterized/variable equalities (tier-1 candidates).
     /// Stores full `ObjectName` (e.g. `["bs", "is_plan"]`) to preserve table qualifiers
     /// for GROUP BY generation in probe SQL.
-    pub tier1: Vec<Vec<String>>,
+    pub tier1: Vec<ObjectName>,
     /// Equality expressions between two known table columns (join conditions).
     pub keep_exprs: Vec<Expr>,
     /// Non-equality expressions to preserve in the WHERE clause.
@@ -54,18 +54,18 @@ impl EqPredicateCollector {
         }
     }
 
-    fn is_known_table(&self, parts: &[String]) -> bool {
+    fn is_known_table(&self, parts: &[Ident]) -> bool {
         parts
             .first()
-            .is_some_and(|p| self.table_aliases.contains(p))
+            .is_some_and(|p| self.table_aliases.contains(p.as_str()))
     }
 
-    fn classify_column_pair(&self, l_parts: &[String], r_parts: &[String]) -> (bool, bool) {
+    fn classify_column_pair(&self, l_parts: &[Ident], r_parts: &[Ident]) -> (bool, bool) {
         if let Some(ref vars) = self.known_variables {
             let l_name = l_parts.last();
             let r_name = r_parts.last();
-            let l_is_var = l_name.is_some_and(|n| vars.contains(n));
-            let r_is_var = r_name.is_some_and(|n| vars.contains(n));
+            let l_is_var = l_name.is_some_and(|n| vars.contains(n.as_str()));
+            let r_is_var = r_name.is_some_and(|n| vars.contains(n.as_str()));
             if l_is_var || r_is_var {
                 return (!l_is_var, !r_is_var);
             }
@@ -271,7 +271,7 @@ fn collect_table_aliases_recursive(tr: &TableRef, aliases: &mut HashSet<String>)
                 aliases.insert(a.clone());
             }
             if let Some(bare) = name.last() {
-                aliases.insert(bare.clone());
+                aliases.insert(bare.as_str().to_string());
             }
         }
         TableRef::Subquery { alias, .. }
