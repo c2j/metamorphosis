@@ -519,7 +519,7 @@ fn substitute_expr(
                             None => {
                                 stats.remaining.push(RemainingPlaceholder {
                                     kind: "variable",
-                                    name: Some(name.clone()),
+                                    name: Some(name.to_string()),
                                     position: None,
                                 });
                                 expr.clone()
@@ -544,7 +544,7 @@ fn substitute_expr(
                     None => {
                         stats.remaining.push(RemainingPlaceholder {
                             kind: "variable",
-                            name: Some(name.clone()),
+                            name: Some(name.to_string()),
                             position: None,
                         });
                         expr.clone()

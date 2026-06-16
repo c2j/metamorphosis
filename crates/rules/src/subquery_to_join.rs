@@ -465,7 +465,7 @@ fn pick_matching_column(expr: &Expr, table_alias: &Option<String>) -> Option<Exp
 fn table_ref_alias(tr: &TableRef) -> Option<String> {
     match tr {
         TableRef::Table { alias, name, .. } => {
-            Some(alias.clone().or_else(|| name.last().cloned())?)
+            Some(alias.clone().or_else(|| name.last().map(|i| i.as_str().to_string()))?)
         }
         TableRef::Subquery { alias, .. }
         | TableRef::Values { alias, .. }

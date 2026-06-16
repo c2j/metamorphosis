@@ -9,7 +9,7 @@ use metamorphosis_core::types::{
 };
 use metamorphosis_core::{RewriteContext, RewriteRule};
 use ogsql_parser::ast::{
-    Expr, GroupByItem, Literal, OrderByItem, SelectStatement, SelectTarget, Spanned, Statement,
+    Expr, GroupByItem, Literal, ObjectName, OrderByItem, SelectStatement, SelectTarget, Spanned, Statement,
     TableRef,
 };
 use std::collections::HashSet;
@@ -73,9 +73,9 @@ impl RewriteRule for DetectDuplicateEqKeys {
         let collector = eq_analyzer::collect_eq_predicates(where_clause, from, ctx.known_variables);
 
         let mut seen = HashSet::new();
-        let mut group_cols: Vec<Vec<String>> = Vec::new();
+        let mut group_cols: Vec<ObjectName> = Vec::new();
         for col_name in collector.tier1.iter() {
-            let key = col_name.last().cloned().unwrap_or_default();
+            let key = col_name.last().map(|i| i.as_str().to_string()).unwrap_or_default();
             if seen.insert(key) {
                 group_cols.push(col_name.clone());
             }
@@ -116,7 +116,7 @@ fn build_probe_statement(
     from: &[TableRef],
     keep_exprs: &[Expr],
     non_param_exprs: &[Expr],
-    group_cols: &[Vec<String>],
+    group_cols: &[ObjectName],
     limit: usize,
 ) -> Spanned<SelectStatement> {
     let mut targets: Vec<SelectTarget> = group_cols
@@ -126,7 +126,7 @@ fn build_probe_statement(
 
     targets.push(SelectTarget::Expr(
         Expr::FunctionCall {
-            name: vec!["count".to_string()],
+            name: vec!["count".into()],
             args: vec![Expr::Literal(Literal::Integer(1))],
             distinct: false,
             over: None,
@@ -148,7 +148,7 @@ fn build_probe_statement(
 
     let having = Some(Expr::BinaryOp {
         left: Box::new(Expr::FunctionCall {
-            name: vec!["count".to_string()],
+            name: vec!["count".into()],
             args: vec![Expr::Literal(Literal::Integer(1))],
             distinct: false,
             over: None,
@@ -165,7 +165,7 @@ fn build_probe_statement(
     });
 
     let order_by = vec![OrderByItem {
-        expr: Expr::ColumnRef(vec!["cnt".to_string()]),
+        expr: Expr::ColumnRef(vec!["cnt".into()]),
         asc: Some(false),
         nulls_first: None,
         using: None,

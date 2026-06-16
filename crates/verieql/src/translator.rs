@@ -320,13 +320,13 @@ fn translate_expr(expr: &OExpr) -> Result<Expr, TranslateError> {
         OExpr::ColumnRef(name) => {
             if name.len() == 2 {
                 Ok(Expr::ColumnRef {
-                    table: Some(name[0].clone()),
-                    column: name[1].clone(),
+                    table: Some(name[0].to_string()),
+                    column: name[1].to_string(),
                 })
             } else if name.len() == 1 {
                 Ok(Expr::ColumnRef {
                     table: None,
-                    column: name[0].clone(),
+                    column: name[0].to_string(),
                 })
             } else {
                 Ok(Expr::ColumnRef {
