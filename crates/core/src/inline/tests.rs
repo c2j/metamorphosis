@@ -437,3 +437,75 @@ fn test_mixed_params() {
     assert!(out.contains("'active'"), "Expected 'active' in: {out}");
     assert!(out.contains("5"), "Expected 5 in: {out}");
 }
+
+#[test]
+fn test_strip_select_into() {
+    let sql = "SELECT t.c1 INTO var FROM t WHERE status = #{status}";
+    let stmts = parse_mybatis(sql);
+    assert!(!stmts.is_empty());
+    let result = inline_statement(
+        &stmts[0],
+        &InlineParams {
+            named: [("status".into(), InlineValue::String("active".into()))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        },
+        None,
+    );
+    let out = format_stmt(&result.statement);
+    assert!(
+        !out.to_uppercase().contains("INTO"),
+        "INTO clause should be stripped, got: {out}"
+    );
+    assert!(out.contains("'active'"), "Expected 'active' in: {out}");
+    assert!(out.contains("FROM t"), "Expected FROM t in: {out}");
+}
+
+#[test]
+fn test_strip_update_returning_into() {
+    let sql = "UPDATE t SET status = 'active' WHERE id = #{id} RETURNING name INTO var";
+    let stmts = parse_mybatis(sql);
+    assert!(!stmts.is_empty());
+    let result = inline_statement(
+        &stmts[0],
+        &InlineParams {
+            named: [("id".into(), InlineValue::Integer(42))].into_iter().collect(),
+            ..Default::default()
+        },
+        None,
+    );
+    let out = format_stmt(&result.statement);
+    assert!(
+        !out.to_uppercase().contains("INTO"),
+        "PL/pgSQL INTO should be stripped, got: {out}"
+    );
+    assert!(
+        out.to_uppercase().contains("RETURNING"),
+        "RETURNING clause should be preserved, got: {out}"
+    );
+}
+
+#[test]
+fn test_strip_delete_returning_into() {
+    let sql = "DELETE FROM t WHERE id = #{id} RETURNING name INTO var";
+    let stmts = parse_mybatis(sql);
+    assert!(!stmts.is_empty());
+    let result = inline_statement(
+        &stmts[0],
+        &InlineParams {
+            named: [("id".into(), InlineValue::Integer(42))].into_iter().collect(),
+            ..Default::default()
+        },
+        None,
+    );
+    let out = format_stmt(&result.statement);
+    assert!(
+        !out.to_uppercase().contains("INTO"),
+        "PL/pgSQL INTO should be stripped, got: {out}"
+    );
+    assert!(
+        out.to_uppercase().contains("RETURNING"),
+        "RETURNING clause should be preserved, got: {out}"
+    );
+}
