@@ -514,7 +514,7 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "metamorphosis-cli"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "clap",
  "encoding_rs",
@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "metamorphosis-core"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "ogsql-parser",
  "serde",
@@ -545,7 +545,7 @@ dependencies = [
 
 [[package]]
 name = "metamorphosis-mcp"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "metamorphosis-core",
  "metamorphosis-qed",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "metamorphosis-qed"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "metamorphosis-core",
  "metamorphosis-rules",
@@ -577,7 +577,7 @@ dependencies = [
 
 [[package]]
 name = "metamorphosis-rules"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "metamorphosis-core",
  "ogsql-parser",

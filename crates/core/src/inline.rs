@@ -157,21 +157,30 @@ pub fn inline_statement(
     let new_stmt = match stmt {
         Statement::Select(spanned) => {
             let mut select = spanned.node.clone();
+            select.into_targets = None;
+            select.into_table = None;
+            select.bulk_collect = false;
             inline_select_mut(&mut select, params, known_variables, &mut pos_counter, &mut stats);
             Statement::Select(ogsql_parser::ast::Spanned::without_span(select))
         }
         Statement::Update(spanned) => {
             let mut update = spanned.node.clone();
+            update.into_targets = None;
+            update.bulk_collect = false;
             inline_update_mut(&mut update, params, known_variables, &mut pos_counter, &mut stats);
             Statement::Update(ogsql_parser::ast::Spanned::without_span(update))
         }
         Statement::Delete(spanned) => {
             let mut delete = spanned.node.clone();
+            delete.into_targets = None;
+            delete.bulk_collect = false;
             inline_delete_mut(&mut delete, params, known_variables, &mut pos_counter, &mut stats);
             Statement::Delete(ogsql_parser::ast::Spanned::without_span(delete))
         }
         Statement::Insert(spanned) => {
             let mut insert = spanned.node.clone();
+            insert.into_targets = None;
+            insert.bulk_collect = false;
             inline_insert_mut(&mut insert, params, known_variables, &mut pos_counter, &mut stats);
             Statement::Insert(ogsql_parser::ast::Spanned::without_span(insert))
         }
