@@ -326,10 +326,29 @@ fn main() {
 /// Returns (1-based start line number, sql text) pairs, skipping empty and comment records.
 /// Supports RFC 4180 quoted fields — a quoted value may span multiple lines.
 fn load_csv_sql(file: &Path) -> Vec<(usize, String)> {
-    let content = std::fs::read_to_string(file).unwrap_or_else(|e| {
+    // Read as bytes first, then decode with UTF-8 → GBK fallback.
+    // Chinese Windows / Excel exports CSVs as GBK/GB2312, which is not
+    // valid UTF-8 and would make `read_to_string` fail outright with
+    // "stream did not contain valid UTF-8". Mirrors `verify_cmd::read_sql_file`.
+    let bytes = std::fs::read(file).unwrap_or_else(|e| {
         eprintln!("Error: cannot read '{}': {}", file.display(), e);
         std::process::exit(1);
     });
+
+    let content = if let Ok(s) = std::str::from_utf8(&bytes) {
+        s.to_string()
+    } else {
+        let (cow, _encoding_used, _had_errors) = encoding_rs::GBK.decode(&bytes);
+        if !cow.is_empty() {
+            cow.into_owned()
+        } else {
+            tracing::warn!(
+                "file '{}' is neither valid UTF-8 nor GBK; replacing invalid sequences",
+                file.display()
+            );
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+    };
 
     // Strip UTF-8 BOM if present (common in Windows-exported CSVs)
     let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
@@ -433,6 +452,16 @@ fn load_csv_sql(file: &Path) -> Vec<(usize, String)> {
         }
 
         let trimmed = field.trim();
+
+        // When the first non-empty, non-comment field is a single-word
+        // identifier (e.g. "sql", "query"), treat it as a CSV header row
+        // and skip it rather than trying to parse it as a SQL statement.
+        let is_single_word =
+            !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if results.is_empty() && is_single_word {
+            continue;
+        }
+
         let is_single_line = !trimmed.contains('\n');
         let looks_like_comment =
             trimmed.starts_with('#') || (is_single_line && trimmed.starts_with("--"));
@@ -1352,8 +1381,9 @@ fn run_suggest_csv_file(
 
     let source_file_str = file.to_str().unwrap_or("unknown");
 
-    let mut parsed: Vec<(usize, StatementInfo)> = Vec::new();
+    let mut parsed: Vec<(usize, StatementInfo, String)> = Vec::new();
     for (line_num, sql) in &csv_lines {
+        let raw_sql = sql.clone();
         let parse_output = Parser::parse_sql_with_options(
             sql,
             ParseOptions {
@@ -1365,7 +1395,7 @@ fn run_suggest_csv_file(
             eprintln!("CSV line {}: parse warning: {:?}", line_num, err);
         }
         if let Some(si) = parse_output.statements.into_iter().next() {
-            parsed.push((*line_num, si));
+            parsed.push((*line_num, si, raw_sql));
         }
     }
 
@@ -1376,14 +1406,14 @@ fn run_suggest_csv_file(
 
     match output {
         OutputFormat::Json => {
-            let stmts: Vec<_> = parsed.iter().map(|(_, si)| si.statement.clone()).collect();
+            let stmts: Vec<_> = parsed.iter().map(|(_, si, _raw)| si.statement.clone()).collect();
             let result = engine.rewrite(&ctx, stmts);
             let suggestions_json = serde_json::to_string_pretty(&result.suggestions)
                 .expect("Failed to serialize suggestions");
             println!("{}", suggestions_json);
         }
         OutputFormat::Text => {
-            for (idx, (_, si)) in parsed.iter().enumerate() {
+            for (idx, (_, si, _raw)) in parsed.iter().enumerate() {
                 let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
                 let header = provenance::format_provenance_header(
                     idx + 1,
@@ -1408,7 +1438,7 @@ fn run_suggest_csv_file(
             }
         }
         OutputFormat::Tsv => {
-            for (i, (_, si)) in parsed.iter().enumerate() {
+            for (i, (_, si, _raw)) in parsed.iter().enumerate() {
                 let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
                 if i > 0 && !result.suggestions.is_empty() {
                     println!();
@@ -1433,7 +1463,7 @@ fn run_suggest_csv_file(
                     .collect::<Vec<_>>()
                     .join(",")
             );
-            for (_, si) in &parsed {
+            for (_, si, raw_sql) in &parsed {
                 let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
                 let mut probes = std::collections::HashMap::new();
                 for s in &result.suggestions {
@@ -1441,7 +1471,11 @@ fn run_suggest_csv_file(
                         probes.insert(s.rule_id.as_str(), compress_sql(stmt));
                     }
                 }
-                let original_sql = si.sql_text.replace(['\n', '\t'], " ");
+                let original_sql = if si.sql_text.is_empty() {
+                    raw_sql.replace(['\n', '\t'], " ")
+                } else {
+                    si.sql_text.replace(['\n', '\t'], " ")
+                };
                 let mut row = vec![csv_escape(&original_sql)];
                 for rid in &all_rule_ids {
                     row.push(probes.get(*rid).map(|s| csv_escape(s)).unwrap_or_default());
@@ -1450,7 +1484,7 @@ fn run_suggest_csv_file(
             }
         }
         OutputFormat::SqlOnly => {
-            for (_, si) in &parsed {
+            for (_, si, _raw) in &parsed {
                 let result = engine.rewrite(&ctx, vec![si.statement.clone()]);
                 for s in &result.suggestions {
                     print_sql_only_suggestion(s);
