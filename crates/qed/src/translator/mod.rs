@@ -450,7 +450,8 @@ impl<'a> AstTranslator<'a> {
                 }
                 SelectTarget::Expr(expr, col_alias) => {
                     let name = col_alias
-                        .clone()
+                        .as_ref()
+                        .map(|a| a.as_str().to_string())
                         .unwrap_or_else(|| expr_column_name(expr))
                         .to_lowercase();
                     columns.push((alias_key.clone(), name));

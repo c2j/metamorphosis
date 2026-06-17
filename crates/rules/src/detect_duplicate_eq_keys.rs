@@ -156,7 +156,7 @@ fn build_probe_statement(
             agg_from: None,
             builtin: None,
         },
-        Some("cnt".to_string()),
+        Some("cnt".into()),
     ));
 
     let group_by: Vec<GroupByItem> = group_cols

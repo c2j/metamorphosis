@@ -1,6 +1,6 @@
 use metamorphosis_core::types::{MatchResult, RewriteAction, RuleCategory, SafetyLevel};
 use metamorphosis_core::{RewriteContext, RewriteRule};
-use ogsql_parser::ast::{SelectTarget, Spanned};
+use ogsql_parser::ast::{Ident, SelectTarget, Spanned};
 use ogsql_parser::{Expr, ObjectName, Statement, TableRef};
 use tracing::debug;
 
@@ -128,7 +128,7 @@ fn stmt_type_label(stmt: &Statement) -> &'static str {
 }
 
 /// Resolve the first base table from the FROM clause, skipping subqueries/joins.
-fn resolve_base_table(from: &[TableRef]) -> Option<(&ObjectName, &Option<String>)> {
+fn resolve_base_table(from: &[TableRef]) -> Option<(&ObjectName, &Option<Ident>)> {
     from.iter().find_map(|tr| match tr {
         TableRef::Table { name, alias, .. } => Some((name, alias)),
         _ => None,

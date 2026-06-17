@@ -473,12 +473,15 @@ fn table_ref_alias(tr: &TableRef) -> Option<String> {
     match tr {
         TableRef::Table { alias, name, .. } => Some(
             alias
-                .clone()
+                .as_ref()
+                .map(|a| a.as_str().to_string())
                 .or_else(|| name.last().map(|i| i.as_str().to_string()))?,
         ),
         TableRef::Subquery { alias, .. }
         | TableRef::Values { alias, .. }
-        | TableRef::FunctionCall { alias, .. } => alias.clone(),
+        | TableRef::FunctionCall { alias, .. } => {
+            alias.as_ref().map(|a| a.as_str().to_string())
+        }
         _ => None,
     }
 }
