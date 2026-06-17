@@ -36,6 +36,22 @@ use tracing::debug;
 #[derive(Debug)]
 pub struct ExtractCandidateValues;
 
+struct ProbeCandidate {
+    stmt: Box<Statement>,
+    label: String,
+    group_cols: Vec<ObjectName>,
+    has_correlated_ref: bool,
+    has_subquery: bool,
+}
+
+fn scope_sort_priority(label: &str) -> u8 {
+    if label.starts_with("subquery") || label.starts_with("cte:") {
+        0
+    } else {
+        1
+    }
+}
+
 impl RewriteRule for ExtractCandidateValues {
     fn id(&self) -> &'static str {
         "extract-candidate-values"
@@ -72,7 +88,8 @@ impl RewriteRule for ExtractCandidateValues {
 
     fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Vec<RewriteAction> {
         let scopes = eq_analyzer::extract_statement_scopes(stmt, ctx.known_variables);
-        let mut actions = Vec::new();
+
+        let mut candidates: Vec<ProbeCandidate> = Vec::new();
 
         for scope in &scopes {
             let collector = eq_analyzer::collect_eq_predicates(
@@ -117,33 +134,54 @@ impl RewriteRule for ExtractCandidateValues {
                 "Generated candidate value probe"
             );
 
-            let purpose = if group_cols.len() == 1 {
-                let display = group_cols[0].join(".");
-                format!(
-                    "Candidate value extraction: show existing values for column '{}' [scope: {}]",
-                    display, scope.label
-                )
-            } else {
-                let displays: Vec<String> = group_cols.iter().map(|c| c.join(".")).collect();
-                format!(
-                    "Candidate value extraction: show existing value combinations for columns [{}] [scope: {}]",
-                    displays.join(", "),
-                    scope.label
-                )
-            };
-
-            actions.push(RewriteAction::Generate {
+            candidates.push(ProbeCandidate {
                 stmt: Box::new(Statement::Select(probe)),
-                purpose,
-                confidence: if collector.has_subquery {
-                    Confidence::Medium
-                } else {
-                    Confidence::High
-                },
+                label: scope.label.clone(),
+                group_cols,
+                has_correlated_ref: collector.has_correlated_ref,
+                has_subquery: collector.has_subquery,
             });
         }
 
-        actions
+        candidates.sort_by_key(|c| scope_sort_priority(&c.label));
+
+        let total = candidates.len();
+        candidates
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| {
+                let probe_num = idx + 1;
+                let cols: Vec<String> = c.group_cols.iter().map(|g| g.join(".")).collect();
+                let mut purpose = format!(
+                    "Probe {} of {}: candidate values for [{}] [scope: {}]",
+                    probe_num,
+                    total,
+                    cols.join(", "),
+                    c.label,
+                );
+
+                if c.has_correlated_ref {
+                    purpose.push_str(
+                        "\nContains correlated reference — remove WHERE or substitute a value to run standalone",
+                    );
+                }
+                if c.has_subquery && total > 1 {
+                    purpose.push_str(
+                        "\nContains subquery with unsubstituted parameters — run earlier probes first and substitute",
+                    );
+                }
+
+                RewriteAction::Generate {
+                    stmt: c.stmt,
+                    purpose,
+                    confidence: if c.has_subquery || c.has_correlated_ref {
+                        Confidence::Medium
+                    } else {
+                        Confidence::High
+                    },
+                }
+            })
+            .collect()
     }
 }
 
@@ -175,7 +213,7 @@ fn build_candidate_probe_statement(
             agg_from: None,
             builtin: None,
         },
-        Some("cnt".to_string()),
+        Some("cnt".into()),
     ));
 
     let group_by: Vec<GroupByItem> = group_cols

@@ -509,7 +509,7 @@ fn substitute_expr(
             }
         }
 
-        Expr::ColumnRef(parts) => {
+        Expr::ColumnRef(parts) | Expr::ColumnRefOuterJoin(parts) => {
             if let Some(vars) = known_vars {
                 if let Some(name) = parts.last() {
                     let name_lower = name.to_lowercase();

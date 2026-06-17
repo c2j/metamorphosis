@@ -1141,7 +1141,7 @@ fn compress_sql(stmt: &ogsql_parser::ast::Statement) -> String {
 fn print_text_suggestion(s: &metamorphosis_core::Suggestion) {
     if let RewriteAction::Generate {
         ref stmt,
-        purpose: _,
+        ref purpose,
         ref confidence,
     } = s.action
     {
@@ -1157,6 +1157,9 @@ fn print_text_suggestion(s: &metamorphosis_core::Suggestion) {
         );
         println!("{}  {}{}", ansi(DIM), s.rule_description, ansi(RESET));
         println!("{}  ────────── PROBE ──────────{}", ansi(DIM), ansi(RESET));
+        for line in purpose.lines() {
+            println!("  -- {}", line);
+        }
         let sql = SqlFormatter::new()
             .pretty_print(true)
             .format_statement(stmt);
