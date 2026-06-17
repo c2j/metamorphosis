@@ -275,8 +275,7 @@ pub fn run_inline(
     }
 
     // 3. Load known_variables from --procedure (if provided)
-    let known_vars: Option<HashSet<String>> =
-        crate::load_procedure_variables(procedure);
+    let known_vars: Option<HashSet<String>> = crate::load_procedure_variables(procedure);
 
     // 4. Parse SQL
     let (sql, source_label) = crate::resolve_input(&file);

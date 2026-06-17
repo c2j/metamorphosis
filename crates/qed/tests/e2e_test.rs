@@ -152,9 +152,16 @@ fn test_eliminate_select_star_pipeline() {
         "rule should match SELECT *"
     );
 
-    if let Some(metamorphosis_core::types::RewriteAction::Replace(rewritten)) =
-        rule.apply(&ctx, &original)
-    {
+    let actions = rule.apply(&ctx, &original);
+    let rewritten = actions.into_iter().find_map(|a| {
+        if let metamorphosis_core::types::RewriteAction::Replace(s) = a {
+            Some(s)
+        } else {
+            None
+        }
+    });
+
+    if let Some(rewritten) = rewritten {
         let translator = AstTranslator::new(&schema);
         let q1 = translator.translate(&original).unwrap();
         let q2 = translator.translate(&rewritten).unwrap();

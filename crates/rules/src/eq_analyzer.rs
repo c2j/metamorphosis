@@ -5,7 +5,9 @@
 //! [`ExtractCandidateValues`](crate::extract_candidate_values) to identify
 //! parameterized vs. literal equality conditions in WHERE clauses.
 
-use ogsql_parser::ast::{Expr, Ident, ObjectName, SelectStatement, TableRef};
+use ogsql_parser::ast::{
+    Expr, Ident, InsertSource, ObjectName, SelectStatement, Statement, TableRef,
+};
 use std::collections::HashSet;
 
 /// Collected equality predicate information from a WHERE clause.
@@ -289,6 +291,254 @@ fn collect_table_aliases_recursive(tr: &TableRef, aliases: &mut HashSet<String>)
             collect_table_aliases_recursive(source, aliases);
         }
     }
+}
+
+// ── QueryScope ──
+
+/// A sub-query scope extracted from a WHERE clause expression tree.
+///
+/// Each scope captures the context (`from` and `where_clause`) needed to
+/// build a data quality probe for that particular sub-expression. Scopes
+/// are collected by [`extract_query_scopes`] which walks the expression
+/// tree looking for `EXISTS`, `IN (subquery)`, `Subquery`, and
+/// `ScalarSublink` nodes, then recursing into each subquery's own WHERE.
+#[derive(Debug, Clone)]
+pub(crate) struct QueryScope {
+    /// Human-readable label for the scope.
+    pub label: String,
+    /// FROM tables from the containing query.
+    pub from: Vec<TableRef>,
+    /// WHERE clause of this scope (the subquery's WHERE or a CTE's WHERE).
+    pub where_clause: Option<Expr>,
+    /// Whether this scope came from a CTE (vs an inline subquery).
+    #[allow(dead_code)]
+    pub is_cte: bool,
+}
+
+/// Walk a WHERE clause expression tree and collect all subquery scopes.
+///
+/// Recursively finds `EXISTS`, `Subquery`, `InSubquery`, and `ScalarSublink`
+/// nodes, creating a [`QueryScope`] for each. Also recurses into each found
+/// subquery's own WHERE to find nested subqueries.
+pub(crate) fn extract_query_scopes(
+    where_clause: &Option<Expr>,
+    from: &[TableRef],
+    known_variables: Option<&HashSet<String>>,
+) -> Vec<QueryScope> {
+    let mut scopes = Vec::new();
+    let mut counter = 0u32;
+    if let Some(expr) = where_clause {
+        walk_subquery_scopes(expr, from, known_variables, &mut counter, &mut scopes);
+    }
+    scopes
+}
+
+/// Recursively walk an expression tree looking for subquery nodes.
+#[allow(clippy::only_used_in_recursion)]
+fn walk_subquery_scopes(
+    expr: &Expr,
+    from: &[TableRef],
+    known_variables: Option<&HashSet<String>>,
+    counter: &mut u32,
+    scopes: &mut Vec<QueryScope>,
+) {
+    match expr {
+        Expr::Exists(subquery)
+        | Expr::Subquery(subquery)
+        | Expr::InSubquery { subquery, .. }
+        | Expr::ScalarSublink { subquery, .. } => {
+            *counter += 1;
+            let label = format!("subquery_{}", counter);
+            // Use the subquery's own FROM for the scope so probes reference
+            // the correct tables.
+            push_subquery_scope(
+                &label,
+                &subquery.from,
+                &subquery.where_clause,
+                false,
+                scopes,
+            );
+            // Recurse into the subquery's own WHERE for nested subqueries.
+            if let Some(ref inner_where) = subquery.where_clause {
+                walk_subquery_scopes(
+                    inner_where,
+                    &subquery.from,
+                    known_variables,
+                    counter,
+                    scopes,
+                );
+            }
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            walk_subquery_scopes(left, from, known_variables, counter, scopes);
+            walk_subquery_scopes(right, from, known_variables, counter, scopes);
+        }
+        Expr::UnaryOp { expr: inner, .. } => {
+            walk_subquery_scopes(inner, from, known_variables, counter, scopes);
+        }
+        Expr::Parenthesized(inner) => {
+            walk_subquery_scopes(inner, from, known_variables, counter, scopes);
+        }
+        _ => {}
+    }
+}
+
+/// Create a [`QueryScope`] and push it onto the scopes vector.
+fn push_subquery_scope(
+    label: &str,
+    from: &[TableRef],
+    where_clause: &Option<Expr>,
+    is_cte: bool,
+    scopes: &mut Vec<QueryScope>,
+) {
+    scopes.push(QueryScope {
+        label: label.to_string(),
+        from: from.to_vec(),
+        where_clause: where_clause.clone(),
+        is_cte,
+    });
+}
+
+/// Extract all query scopes from a statement for equality analysis.
+///
+/// For SELECT, uses `resolve_query` to unwrap common pagination wrapper patterns.
+/// For UPDATE/DELETE, uses the statement's FROM/USING and WHERE directly.
+/// For INSERT, uses the source SELECT's FROM/WHERE if the source is a SELECT.
+/// For MERGE, uses the source table and ON condition.
+/// For all DML types, also extracts subquery scopes from WHERE clauses and
+/// CTE definitions from WITH clauses.
+pub(crate) fn extract_statement_scopes(
+    stmt: &Statement,
+    known_variables: Option<&std::collections::HashSet<String>>,
+) -> Vec<QueryScope> {
+    let mut scopes = Vec::new();
+    let mut counter = 0u32;
+
+    match stmt {
+        Statement::Select(s) => {
+            let (where_clause, from) = resolve_query(&s.node);
+            counter += 1;
+            scopes.push(QueryScope {
+                label: format!("main_{}", counter),
+                from: from.to_vec(),
+                where_clause: where_clause.clone(),
+                is_cte: false,
+            });
+
+            scopes.extend(extract_query_scopes(where_clause, from, known_variables));
+
+            extract_cte_scopes(&s.node.with, known_variables, &mut counter, &mut scopes);
+        }
+        Statement::Update(s) => {
+            counter += 1;
+            scopes.push(QueryScope {
+                label: format!("main_{}", counter),
+                from: s.node.from.clone(),
+                where_clause: s.node.where_clause.clone(),
+                is_cte: false,
+            });
+
+            scopes.extend(extract_query_scopes(
+                &s.node.where_clause,
+                &s.node.from,
+                known_variables,
+            ));
+
+            extract_cte_scopes(&s.node.with, known_variables, &mut counter, &mut scopes);
+        }
+        Statement::Delete(s) => {
+            counter += 1;
+            scopes.push(QueryScope {
+                label: format!("main_{}", counter),
+                from: s.node.using.clone(),
+                where_clause: s.node.where_clause.clone(),
+                is_cte: false,
+            });
+
+            scopes.extend(extract_query_scopes(
+                &s.node.where_clause,
+                &s.node.using,
+                known_variables,
+            ));
+
+            extract_cte_scopes(&s.node.with, known_variables, &mut counter, &mut scopes);
+        }
+        Statement::Insert(s) => {
+            if let InsertSource::Select(ref select) = s.node.source {
+                counter += 1;
+                scopes.push(QueryScope {
+                    label: format!("insert_select_{}", counter),
+                    from: select.from.clone(),
+                    where_clause: select.where_clause.clone(),
+                    is_cte: false,
+                });
+
+                scopes.extend(extract_query_scopes(
+                    &select.where_clause,
+                    &select.from,
+                    known_variables,
+                ));
+            }
+
+            extract_cte_scopes(&s.node.with, known_variables, &mut counter, &mut scopes);
+        }
+        Statement::Merge(s) => {
+            let merge_from = vec![s.node.source.clone()];
+            let merge_where = Some(s.node.on_condition.clone());
+
+            counter += 1;
+            scopes.push(QueryScope {
+                label: format!("main_{}", counter),
+                from: merge_from.clone(),
+                where_clause: merge_where.clone(),
+                is_cte: false,
+            });
+
+            scopes.extend(extract_query_scopes(
+                &merge_where,
+                &merge_from,
+                known_variables,
+            ));
+        }
+        _ => {}
+    }
+
+    scopes
+}
+
+/// Extract query scopes from CTE definitions.
+pub(crate) fn extract_cte_scopes(
+    with: &Option<ogsql_parser::ast::WithClause>,
+    known_variables: Option<&std::collections::HashSet<String>>,
+    counter: &mut u32,
+    scopes: &mut Vec<QueryScope>,
+) {
+    if let Some(ref with_clause) = with {
+        for cte in &with_clause.ctes {
+            *counter += 1;
+            scopes.push(QueryScope {
+                label: format!("cte:{}", cte.name),
+                from: cte.query.from.clone(),
+                where_clause: cte.query.where_clause.clone(),
+                is_cte: true,
+            });
+
+            scopes.extend(extract_query_scopes(
+                &cte.query.where_clause,
+                &cte.query.from,
+                known_variables,
+            ));
+        }
+    }
+}
+
+/// Check whether any table in `from` references the given CTE name.
+#[allow(dead_code)]
+pub(crate) fn references_cte(from: &[TableRef], cte_name: &str) -> bool {
+    from.iter().any(|tr| match tr {
+        TableRef::Table { name, .. } => name.last().is_some_and(|i| i.as_str() == cte_name),
+        _ => false,
+    })
 }
 
 pub(crate) fn contains_param(expr: &Expr) -> bool {

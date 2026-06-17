@@ -21,6 +21,7 @@ use std::path::Path;
 use metamorphosis_core::context::{RewriteConfig, RewriteContext};
 use metamorphosis_core::engine::RewriteEngine;
 use metamorphosis_core::extractor::extract_schema_from_dir;
+use metamorphosis_core::inline::{inline_statement, InlineParams, InlineValue};
 use metamorphosis_core::registry::RuleRegistry;
 use metamorphosis_core::types::{Confidence, RewriteAction, RuleCategory, SafetyLevel};
 use metamorphosis_qed::prover::{ProofResult as QedProofResult, ProverConfig};
@@ -30,16 +31,15 @@ use metamorphosis_verieql::types::{
     Bound, ColumnType, ProofResult as VerieqlProofResult, Semantics, TableSchema,
 };
 use metamorphosis_verieql::VeriEql;
-use metamorphosis_core::inline::{inline_statement, InlineParams, InlineValue};
 use ogsql_parser::analyzer::schema::SchemaMap;
 use ogsql_parser::ast::{Statement, StatementInfo};
 use ogsql_parser::formatter::SqlFormatter;
-use ogsql_parser::{Parser, ParserError, ParseOptions};
+use ogsql_parser::{ParseOptions, Parser, ParserError};
 
 use crate::types::{
     ExtractSchemaResponse, InlineResponse, ListRulesResponse, MatchFailureInfo,
-    RemainingPlaceholderInfo, RewriteResponse, RuleInfo, SuggestResponse,
-    SuggestionInfo, VerifyResponse,
+    RemainingPlaceholderInfo, RewriteResponse, RuleInfo, SuggestResponse, SuggestionInfo,
+    VerifyResponse,
 };
 
 // ── Helper functions ──────────────────────────────────────────────────────
@@ -545,15 +545,30 @@ pub fn extract_schema(
 
 pub fn inline_sql(params: crate::types::InlineSqlParams) -> Result<InlineResponse, String> {
     let inline_params = InlineParams {
-        named: params.named.iter().map(|(k, v)| (k.clone(), json_to_inline_value(v))).collect(),
+        named: params
+            .named
+            .iter()
+            .map(|(k, v)| (k.clone(), json_to_inline_value(v)))
+            .collect(),
         positional: params.positional.iter().map(json_to_inline_value).collect(),
     };
-    let known_vars = params.known_variables.map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
+    let known_vars = params
+        .known_variables
+        .map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
     let (stmt_infos, warnings) = if params.mybatis {
-        let output = Parser::parse_sql_with_options(&params.sql, ParseOptions {
-            preserve_comments: false, mybatis_params: true,
-        });
-        let warnings: Vec<String> = output.errors.iter().filter(|e| is_warning(e)).map(|e| e.to_string()).collect();
+        let output = Parser::parse_sql_with_options(
+            &params.sql,
+            ParseOptions {
+                preserve_comments: false,
+                mybatis_params: true,
+            },
+        );
+        let warnings: Vec<String> = output
+            .errors
+            .iter()
+            .filter(|e| is_warning(e))
+            .map(|e| e.to_string())
+            .collect();
         (output.statements, warnings)
     } else {
         parse_sql(&params.sql)
@@ -566,14 +581,24 @@ pub fn inline_sql(params: crate::types::InlineSqlParams) -> Result<InlineRespons
         let result = inline_statement(stmt, &inline_params, known_vars.as_ref());
         inlined_sql.push(format_stmt(&result.statement));
         total_replaced += result.replaced_named + result.replaced_positional;
-        all_remaining.extend(result.remaining.into_iter().map(|r| RemainingPlaceholderInfo {
-            kind: r.kind.to_string(),
-            name: r.name,
-            position: r.position,
-            statement_index: idx,
-        }));
+        all_remaining.extend(
+            result
+                .remaining
+                .into_iter()
+                .map(|r| RemainingPlaceholderInfo {
+                    kind: r.kind.to_string(),
+                    name: r.name,
+                    position: r.position,
+                    statement_index: idx,
+                }),
+        );
     }
-    Ok(InlineResponse { inlined_sql, total_replaced, remaining_placeholders: all_remaining, warnings })
+    Ok(InlineResponse {
+        inlined_sql,
+        total_replaced,
+        remaining_placeholders: all_remaining,
+        warnings,
+    })
 }
 
 fn json_to_inline_value(v: &serde_json::Value) -> InlineValue {

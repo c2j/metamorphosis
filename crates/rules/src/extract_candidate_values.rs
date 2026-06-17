@@ -4,8 +4,8 @@ use metamorphosis_core::types::{
 };
 use metamorphosis_core::{RewriteContext, RewriteRule};
 use ogsql_parser::ast::{
-    Expr, GroupByItem, Literal, ObjectName, OrderByItem, SelectStatement, SelectTarget, Spanned, Statement,
-    TableRef,
+    Expr, GroupByItem, Literal, ObjectName, OrderByItem, SelectStatement, SelectTarget, Spanned,
+    Statement, TableRef,
 };
 use std::collections::HashSet;
 use tracing::debug;
@@ -21,6 +21,13 @@ use tracing::debug;
 /// exist in the data, the query returns nothing. This rule generates a probe to show
 /// what values *do* exist (filtered by non-parameterized conditions), enabling the
 /// user to find a valid input value.
+///
+/// # DML Support
+///
+/// Supports SELECT, UPDATE, DELETE, INSERT ... SELECT, and MERGE statements.
+/// For each statement, the rule extracts multiple query scopes (main query,
+/// subqueries in WHERE, CTEs) and generates one probe per scope with tier-1
+/// (parameterized) equality columns.
 ///
 /// # Example
 ///
@@ -47,88 +54,96 @@ impl RewriteRule for ExtractCandidateValues {
     }
 
     fn matches(&self, ctx: &RewriteContext, stmt: &Statement) -> MatchResult {
-        let select = match stmt {
-            Statement::Select(s) => &s.node,
-            _ => {
-                return MatchResult::NotMatched {
-                    reason: "Statement is not a SELECT".to_string(),
-                }
+        let scopes = eq_analyzer::extract_statement_scopes(stmt, ctx.known_variables);
+        for scope in &scopes {
+            let collector = eq_analyzer::collect_eq_predicates(
+                &scope.where_clause,
+                &scope.from,
+                ctx.known_variables,
+            );
+            if !collector.tier1.is_empty() {
+                return MatchResult::Matched;
             }
-        };
-
-        let (where_clause, from) = eq_analyzer::resolve_query(select);
-        let collector = eq_analyzer::collect_eq_predicates(where_clause, from, ctx.known_variables);
-        if collector.tier1.is_empty() {
-            MatchResult::NotMatched {
-                reason: "No parameterized equality conditions (col = :param) found in WHERE clause"
-                    .to_string(),
-            }
-        } else {
-            MatchResult::Matched
+        }
+        MatchResult::NotMatched {
+            reason: "No parameterized equality conditions found in any query scope".to_string(),
         }
     }
 
-    fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Option<RewriteAction> {
-        let select = match stmt {
-            Statement::Select(s) => &s.node,
-            _ => return None,
-        };
+    fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Vec<RewriteAction> {
+        let scopes = eq_analyzer::extract_statement_scopes(stmt, ctx.known_variables);
+        let mut actions = Vec::new();
 
-        let (where_clause, from) = eq_analyzer::resolve_query(select);
-        let collector = eq_analyzer::collect_eq_predicates(where_clause, from, ctx.known_variables);
-
-        let mut seen = HashSet::new();
-        let mut group_cols: Vec<ObjectName> = Vec::new();
-        for col_name in collector.tier1.iter() {
-            let key = col_name.last().map(|i| i.as_str().to_string()).unwrap_or_default();
-            if seen.insert(key) {
-                group_cols.push(col_name.clone());
+        for scope in &scopes {
+            let collector = eq_analyzer::collect_eq_predicates(
+                &scope.where_clause,
+                &scope.from,
+                ctx.known_variables,
+            );
+            if collector.tier1.is_empty() {
+                continue;
             }
-        }
 
-        if group_cols.is_empty() {
-            return None;
-        }
+            let mut seen = HashSet::new();
+            let mut group_cols: Vec<ObjectName> = Vec::new();
+            for col_name in collector.tier1.iter() {
+                let key = col_name
+                    .last()
+                    .map(|i| i.as_str().to_string())
+                    .unwrap_or_default();
+                if seen.insert(key) {
+                    group_cols.push(col_name.clone());
+                }
+            }
 
-        let limit = ctx.config.probe_default_limit;
-        let non_param = collector.non_param_exprs();
-        let probe = build_candidate_probe_statement(
-            from,
-            &collector.keep_exprs,
-            &non_param,
-            &group_cols,
-            limit,
-        );
+            if group_cols.is_empty() {
+                continue;
+            }
 
-        debug!(
-            rule_id = self.id(),
-            group_cols = ?group_cols,
-            "Generated candidate value probe"
-        );
+            let limit = ctx.config.probe_default_limit;
+            let non_param = collector.non_param_exprs();
+            let probe = build_candidate_probe_statement(
+                &scope.from,
+                &collector.keep_exprs,
+                &non_param,
+                &group_cols,
+                limit,
+            );
 
-        let purpose = if group_cols.len() == 1 {
-            let display = group_cols[0].join(".");
-            format!(
-                "Candidate value extraction: show existing values for column '{}'",
-                display
-            )
-        } else {
-            let displays: Vec<String> = group_cols.iter().map(|c| c.join(".")).collect();
-            format!(
-                "Candidate value extraction: show existing value combinations for columns [{}]",
-                displays.join(", ")
-            )
-        };
+            debug!(
+                rule_id = self.id(),
+                scope = %scope.label,
+                group_cols = ?group_cols,
+                "Generated candidate value probe"
+            );
 
-        Some(RewriteAction::Generate {
-            stmt: Box::new(Statement::Select(probe)),
-            purpose,
-            confidence: if collector.has_subquery {
-                Confidence::Medium
+            let purpose = if group_cols.len() == 1 {
+                let display = group_cols[0].join(".");
+                format!(
+                    "Candidate value extraction: show existing values for column '{}' [scope: {}]",
+                    display, scope.label
+                )
             } else {
-                Confidence::High
-            },
-        })
+                let displays: Vec<String> = group_cols.iter().map(|c| c.join(".")).collect();
+                format!(
+                    "Candidate value extraction: show existing value combinations for columns [{}] [scope: {}]",
+                    displays.join(", "),
+                    scope.label
+                )
+            };
+
+            actions.push(RewriteAction::Generate {
+                stmt: Box::new(Statement::Select(probe)),
+                purpose,
+                confidence: if collector.has_subquery {
+                    Confidence::Medium
+                } else {
+                    Confidence::High
+                },
+            });
+        }
+
+        actions
     }
 }
 

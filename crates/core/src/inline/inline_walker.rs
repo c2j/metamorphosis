@@ -224,7 +224,10 @@ pub(crate) fn inline_insert_mut(
     }
 
     if let Some(ref mut oc) = insert.on_conflict {
-        if let ast::ConflictAction::DoUpdate { ref mut assignments, ref mut where_clause } = oc.action
+        if let ast::ConflictAction::DoUpdate {
+            ref mut assignments,
+            ref mut where_clause,
+        } = oc.action
         {
             for assignment in assignments {
                 substitute_assignment(assignment, params, known_vars, pos_counter, stats);
@@ -249,7 +252,8 @@ pub(crate) fn inline_merge_mut(
 ) {
     substitute_table_ref(&mut merge.target, params, known_vars, pos_counter, stats);
     substitute_table_ref(&mut merge.source, params, known_vars, pos_counter, stats);
-    merge.on_condition = substitute_expr(&merge.on_condition, params, known_vars, pos_counter, stats);
+    merge.on_condition =
+        substitute_expr(&merge.on_condition, params, known_vars, pos_counter, stats);
 
     for clause in &mut merge.when_clauses {
         if let Some(ref mut expr) = clause.where_clause {
@@ -424,7 +428,8 @@ fn substitute_table_ref(
         }
         TableRef::Pivot { source, pivot } => {
             substitute_table_ref(source, params, known_vars, pos_counter, stats);
-            pivot.aggregate = substitute_expr(&pivot.aggregate, params, known_vars, pos_counter, stats);
+            pivot.aggregate =
+                substitute_expr(&pivot.aggregate, params, known_vars, pos_counter, stats);
             for pv in &mut pivot.values {
                 pv.value = substitute_expr(&pv.value, params, known_vars, pos_counter, stats);
             }
@@ -509,7 +514,9 @@ fn substitute_expr(
                 if let Some(name) = parts.last() {
                     let name_lower = name.to_lowercase();
                     if vars.contains(&name_lower) {
-                        let val = params.named.get(name.as_str())
+                        let val = params
+                            .named
+                            .get(name.as_str())
                             .or_else(|| params.named.get(&name_lower));
                         return match val {
                             Some(val) => {
@@ -534,7 +541,9 @@ fn substitute_expr(
         Expr::PlVariable(parts) => {
             if let Some(name) = parts.last() {
                 let name_lower = name.to_lowercase();
-                let val = params.named.get(name.as_str())
+                let val = params
+                    .named
+                    .get(name.as_str())
                     .or_else(|| params.named.get(&name_lower));
                 return match val {
                     Some(val) => {
@@ -555,22 +564,53 @@ fn substitute_expr(
         }
 
         Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
-            left: Box::new(substitute_expr(left, params, known_vars, pos_counter, stats)),
+            left: Box::new(substitute_expr(
+                left,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             op: op.clone(),
-            right: Box::new(substitute_expr(right, params, known_vars, pos_counter, stats)),
+            right: Box::new(substitute_expr(
+                right,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
         },
 
         Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
             op: op.clone(),
-            expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+            expr: Box::new(substitute_expr(
+                inner,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
         },
 
-        Expr::Parenthesized(inner) => {
-            Expr::Parenthesized(Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)))
-        }
+        Expr::Parenthesized(inner) => Expr::Parenthesized(Box::new(substitute_expr(
+            inner,
+            params,
+            known_vars,
+            pos_counter,
+            stats,
+        ))),
 
-        Expr::IsNull { expr: inner, negated } => Expr::IsNull {
-            expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+        Expr::IsNull {
+            expr: inner,
+            negated,
+        } => Expr::IsNull {
+            expr: Box::new(substitute_expr(
+                inner,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             negated: *negated,
         },
 
@@ -579,7 +619,13 @@ fn substitute_expr(
             value,
             negated,
         } => Expr::IsBoolean {
-            expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+            expr: Box::new(substitute_expr(
+                inner,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             value: *value,
             negated: *negated,
         },
@@ -590,7 +636,13 @@ fn substitute_expr(
             default,
             format,
         } => Expr::TypeCast {
-            expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+            expr: Box::new(substitute_expr(
+                inner,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             type_name: type_name.clone(),
             default: default
                 .as_ref()
@@ -604,7 +656,13 @@ fn substitute_expr(
             expr: inner,
             type_name,
         } => Expr::Treat {
-            expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+            expr: Box::new(substitute_expr(
+                inner,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             type_name: type_name.clone(),
         },
 
@@ -693,9 +751,21 @@ fn substitute_expr(
             high,
             negated,
         } => Expr::Between {
-            expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+            expr: Box::new(substitute_expr(
+                inner,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             low: Box::new(substitute_expr(low, params, known_vars, pos_counter, stats)),
-            high: Box::new(substitute_expr(high, params, known_vars, pos_counter, stats)),
+            high: Box::new(substitute_expr(
+                high,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             negated: *negated,
         },
 
@@ -704,7 +774,13 @@ fn substitute_expr(
             list,
             negated,
         } => Expr::InList {
-            expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+            expr: Box::new(substitute_expr(
+                inner,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             list: list
                 .iter()
                 .map(|e| substitute_expr(e, params, known_vars, pos_counter, stats))
@@ -719,8 +795,20 @@ fn substitute_expr(
             negated,
             case_insensitive,
         } => Expr::Like {
-            expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
-            pattern: Box::new(substitute_expr(pattern, params, known_vars, pos_counter, stats)),
+            expr: Box::new(substitute_expr(
+                inner,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
+            pattern: Box::new(substitute_expr(
+                pattern,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             escape: escape
                 .as_ref()
                 .map(|e| Box::new(substitute_expr(e, params, known_vars, pos_counter, stats))),
@@ -734,7 +822,13 @@ fn substitute_expr(
             upper,
             is_slice,
         } => Expr::Subscript {
-            object: Box::new(substitute_expr(object, params, known_vars, pos_counter, stats)),
+            object: Box::new(substitute_expr(
+                object,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             lower: lower
                 .as_ref()
                 .map(|l| Box::new(substitute_expr(l, params, known_vars, pos_counter, stats))),
@@ -759,18 +853,34 @@ fn substitute_expr(
         ),
 
         Expr::CollationFor { expr: inner } => Expr::CollationFor {
-            expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+            expr: Box::new(substitute_expr(
+                inner,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
         },
 
-        Expr::Prior(inner) => {
-            Expr::Prior(Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)))
-        }
+        Expr::Prior(inner) => Expr::Prior(Box::new(substitute_expr(
+            inner,
+            params,
+            known_vars,
+            pos_counter,
+            stats,
+        ))),
 
         Expr::FieldAccess {
             object: inner,
             field,
         } => Expr::FieldAccess {
-            object: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+            object: Box::new(substitute_expr(
+                inner,
+                params,
+                known_vars,
+                pos_counter,
+                stats,
+            )),
             field: field.clone(),
         },
 
@@ -794,7 +904,13 @@ fn substitute_expr(
             let mut subquery = *subquery.clone();
             inline_select_mut(&mut subquery, params, known_vars, pos_counter, stats);
             Expr::InSubquery {
-                expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+                expr: Box::new(substitute_expr(
+                    inner,
+                    params,
+                    known_vars,
+                    pos_counter,
+                    stats,
+                )),
                 subquery: Box::new(subquery),
                 negated: *negated,
             }
@@ -809,7 +925,13 @@ fn substitute_expr(
             let mut subquery = *subquery.clone();
             inline_select_mut(&mut subquery, params, known_vars, pos_counter, stats);
             Expr::ScalarSublink {
-                expr: Box::new(substitute_expr(inner, params, known_vars, pos_counter, stats)),
+                expr: Box::new(substitute_expr(
+                    inner,
+                    params,
+                    known_vars,
+                    pos_counter,
+                    stats,
+                )),
                 op: op.clone(),
                 sublink_type: sublink_type.clone(),
                 subquery: Box::new(subquery),

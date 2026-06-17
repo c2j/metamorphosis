@@ -456,8 +456,10 @@ fn load_csv_sql(file: &Path) -> Vec<(usize, String)> {
         // When the first non-empty, non-comment field is a single-word
         // identifier (e.g. "sql", "query"), treat it as a CSV header row
         // and skip it rather than trying to parse it as a SQL statement.
-        let is_single_word =
-            !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let is_single_word = !trimmed.is_empty()
+            && trimmed
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_');
         if results.is_empty() && is_single_word {
             continue;
         }
@@ -1406,7 +1408,10 @@ fn run_suggest_csv_file(
 
     match output {
         OutputFormat::Json => {
-            let stmts: Vec<_> = parsed.iter().map(|(_, si, _raw)| si.statement.clone()).collect();
+            let stmts: Vec<_> = parsed
+                .iter()
+                .map(|(_, si, _raw)| si.statement.clone())
+                .collect();
             let result = engine.rewrite(&ctx, stmts);
             let suggestions_json = serde_json::to_string_pretty(&result.suggestions)
                 .expect("Failed to serialize suggestions");

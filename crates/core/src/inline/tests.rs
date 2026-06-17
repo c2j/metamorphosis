@@ -1,8 +1,8 @@
 use super::*;
 use ogsql_parser::ast::{Expr, Literal, Statement};
-use std::collections::HashSet;
-use ogsql_parser::Parser;
 use ogsql_parser::ParseOptions;
+use ogsql_parser::Parser;
+use std::collections::HashSet;
 
 fn parse(sql: &str) -> Vec<Statement> {
     let (infos, _errors) = Parser::parse_sql(sql);
@@ -17,7 +17,11 @@ fn parse_mybatis(sql: &str) -> Vec<Statement> {
             mybatis_params: true,
         },
     );
-    output.statements.into_iter().map(|info| info.statement).collect()
+    output
+        .statements
+        .into_iter()
+        .map(|info| info.statement)
+        .collect()
 }
 
 fn inline_sql(
@@ -26,7 +30,10 @@ fn inline_sql(
     known_vars: Option<&HashSet<String>>,
 ) -> InlineResult {
     let stmts = parse(sql);
-    assert!(!stmts.is_empty(), "Expected at least one statement from: {sql}");
+    assert!(
+        !stmts.is_empty(),
+        "Expected at least one statement from: {sql}"
+    );
     inline_statement(&stmts[0], params, known_vars)
 }
 
@@ -43,7 +50,10 @@ fn test_inline_value_to_sql_literal() {
     assert_eq!(InlineValue::Integer(0).to_sql_literal(), "0");
     assert_eq!(InlineValue::Integer(-42).to_sql_literal(), "-42");
     assert_eq!(InlineValue::Float("3.14".into()).to_sql_literal(), "3.14");
-    assert_eq!(InlineValue::String("hello".into()).to_sql_literal(), "'hello'");
+    assert_eq!(
+        InlineValue::String("hello".into()).to_sql_literal(),
+        "'hello'"
+    );
     assert_eq!(InlineValue::String("".into()).to_sql_literal(), "''");
 }
 
@@ -73,7 +83,10 @@ fn test_infer_value() {
     assert_eq!(infer_value("0"), InlineValue::Integer(0));
     assert_eq!(infer_value("3.14"), InlineValue::Float("3.14".into()));
     assert_eq!(infer_value("hello"), InlineValue::String("hello".into()));
-    assert_eq!(infer_value("TRUEish"), InlineValue::String("TRUEish".into()));
+    assert_eq!(
+        infer_value("TRUEish"),
+        InlineValue::String("TRUEish".into())
+    );
 }
 
 #[test]
@@ -470,7 +483,9 @@ fn test_strip_update_returning_into() {
     let result = inline_statement(
         &stmts[0],
         &InlineParams {
-            named: [("id".into(), InlineValue::Integer(42))].into_iter().collect(),
+            named: [("id".into(), InlineValue::Integer(42))]
+                .into_iter()
+                .collect(),
             ..Default::default()
         },
         None,
@@ -494,7 +509,9 @@ fn test_strip_delete_returning_into() {
     let result = inline_statement(
         &stmts[0],
         &InlineParams {
-            named: [("id".into(), InlineValue::Integer(42))].into_iter().collect(),
+            named: [("id".into(), InlineValue::Integer(42))]
+                .into_iter()
+                .collect(),
             ..Default::default()
         },
         None,

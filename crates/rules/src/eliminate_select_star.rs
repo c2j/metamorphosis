@@ -52,21 +52,30 @@ impl RewriteRule for EliminateSelectStar {
         }
     }
 
-    fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Option<RewriteAction> {
-        let schema = ctx.schema?;
+    fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Vec<RewriteAction> {
+        let schema = match ctx.schema {
+            Some(ref s) => s,
+            None => return vec![],
+        };
         let spanned = match stmt {
             Statement::Select(s) => s,
-            _ => return None,
+            _ => return vec![],
         };
 
         let select = &spanned.node;
         if !has_wildcard_target(&select.targets) {
-            return None;
+            return vec![];
         }
 
-        let (table_name, _alias) = resolve_base_table(&select.from)?;
+        let (table_name, _alias) = match resolve_base_table(&select.from) {
+            Some(v) => v,
+            None => return vec![],
+        };
         let table_key = table_name.join(".").to_lowercase();
-        let columns = schema.get(&table_key)?;
+        let columns = match schema.get(&table_key) {
+            Some(c) => c,
+            None => return vec![],
+        };
 
         debug!(
             table = %table_key,
@@ -94,9 +103,9 @@ impl RewriteRule for EliminateSelectStar {
         let mut new_select = select.clone();
         new_select.targets = new_targets;
 
-        Some(RewriteAction::Replace(Box::new(Statement::Select(
+        vec![RewriteAction::Replace(Box::new(Statement::Select(
             Spanned::without_span(new_select),
-        ))))
+        )))]
     }
 }
 

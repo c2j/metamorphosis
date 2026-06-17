@@ -295,10 +295,8 @@ fn test_inline_procedure_flag() {
     let proc_path = dir.path().join("vars_proc.sql");
     let sql_path = dir.path().join("query.sql");
     let mut f = std::fs::File::create(&proc_path).unwrap();
-    f.write_all(
-        b"CREATE OR REPLACE PROCEDURE demo(p_id VARCHAR2) IS BEGIN NULL; END;",
-    )
-    .unwrap();
+    f.write_all(b"CREATE OR REPLACE PROCEDURE demo(p_id VARCHAR2) IS BEGIN NULL; END;")
+        .unwrap();
     let mut f = std::fs::File::create(&sql_path).unwrap();
     f.write_all(b"SELECT * FROM t WHERE id = p_id").unwrap();
 

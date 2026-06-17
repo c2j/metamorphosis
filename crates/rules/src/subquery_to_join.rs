@@ -93,10 +93,10 @@ impl RewriteRule for SubqueryToJoin {
         }
     }
 
-    fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Option<RewriteAction> {
+    fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Vec<RewriteAction> {
         let spanned = match stmt {
             Statement::Select(s) => s,
-            _ => return None,
+            _ => return vec![],
         };
 
         let select = &spanned.node;
@@ -104,21 +104,21 @@ impl RewriteRule for SubqueryToJoin {
         // Try WHERE-clause subquery first (these produce Replace actions).
         if let Some(ref where_clause) = select.where_clause {
             if let Some(pattern) = find_where_pattern(where_clause) {
-                return handle_where_pattern(pattern, select, ctx);
+                return vec![handle_where_pattern(pattern, select, ctx)];
             }
         }
 
         // Fallback: scalar subquery in targets (suggest only).
         if has_scalar_subquery(&select.targets) {
-            return Some(RewriteAction::Suggest {
+            return vec![RewriteAction::Suggest {
                 message:
                     "Scalar subquery in SELECT list — consider rewriting as JOIN or window function"
                         .to_string(),
                 severity: Severity::Warning,
-            });
+            }];
         }
 
-        None
+        vec![]
     }
 }
 
@@ -220,22 +220,25 @@ fn handle_where_pattern(
     pattern: WherePattern,
     select: &SelectStatement,
     ctx: &RewriteContext,
-) -> Option<RewriteAction> {
+) -> RewriteAction {
     match pattern {
         WherePattern::Exists(subquery) => {
             // Check if the outer WHERE was `NOT Exists(...)`.
             // We detect this at the WherePattern level: NOT EXISTS is
             // converted to an Exists pattern by find_where_pattern.
             // We need to re-check the original expression.
-            let was_negated = matches!(
-                select.where_clause.as_ref()?,
-                Expr::UnaryOp { op, .. } if op == "NOT"
-            );
+            let was_negated = select
+                .where_clause
+                .as_ref()
+                .is_some_and(|expr| matches!(expr, Expr::UnaryOp { op, .. } if op == "NOT"));
 
             if was_negated {
+                // SAFETY: is_safe_subquery passed, so helpers won't fail.
                 rewrite_not_exists(&subquery, select, ctx)
+                    .expect("NOT EXISTS rewrite should succeed after safety guard")
             } else {
                 rewrite_exists(&subquery, select, ctx)
+                    .expect("EXISTS rewrite should succeed after safety guard")
             }
         }
         WherePattern::InSubquery {
@@ -244,9 +247,13 @@ fn handle_where_pattern(
             negated,
         } => {
             if negated {
+                // expect justified: is_safe_subquery passed
                 rewrite_not_in(&expr, &subquery, select, ctx)
+                    .expect("NOT IN rewrite should succeed after safety guard")
             } else {
+                // expect justified: is_safe_subquery passed
                 rewrite_in(&expr, &subquery, select, ctx)
+                    .expect("IN rewrite should succeed after safety guard")
             }
         }
     }
@@ -464,9 +471,11 @@ fn pick_matching_column(expr: &Expr, table_alias: &Option<String>) -> Option<Exp
 /// Get the alias or table name from a TableRef.
 fn table_ref_alias(tr: &TableRef) -> Option<String> {
     match tr {
-        TableRef::Table { alias, name, .. } => {
-            Some(alias.clone().or_else(|| name.last().map(|i| i.as_str().to_string()))?)
-        }
+        TableRef::Table { alias, name, .. } => Some(
+            alias
+                .clone()
+                .or_else(|| name.last().map(|i| i.as_str().to_string()))?,
+        ),
         TableRef::Subquery { alias, .. }
         | TableRef::Values { alias, .. }
         | TableRef::FunctionCall { alias, .. } => alias.clone(),

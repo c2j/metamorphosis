@@ -31,8 +31,11 @@ pub trait RewriteRule: Debug + Send + Sync {
     /// a human-readable reason.
     fn matches(&self, ctx: &RewriteContext, stmt: &Statement) -> MatchResult;
 
-    /// Execute the rewrite, returning an action if the rule matched.
-    fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Option<RewriteAction>;
+    /// Execute the rewrite, returning zero or more actions.
+    ///
+    /// Most rules return a single action; rules targeting multiple sub-expressions
+    /// (e.g., one probe per subquery scope) may return multiple actions.
+    fn apply(&self, ctx: &RewriteContext, stmt: &Statement) -> Vec<RewriteAction>;
 }
 
 /// Registry holding all available rules from multiple sources.

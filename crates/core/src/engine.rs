@@ -77,18 +77,24 @@ impl RewriteEngine {
             for rule in &auto_rules {
                 match rule.matches(ctx, &stmt) {
                     MatchResult::Matched => {
-                        if let Some(RewriteAction::Replace(new_stmt)) = rule.apply(ctx, &stmt) {
-                            if validate_statement(&new_stmt) {
-                                stmt = *new_stmt;
-                                iteration_changed = true;
-                                changed = true;
-                                debug!(
-                                    rule_id = rule.id(),
-                                    iteration = iteration,
-                                    "Safe rewrite applied"
-                                );
-                                break;
+                        let actions = rule.apply(ctx, &stmt);
+                        for action in actions {
+                            if let RewriteAction::Replace(new_stmt) = action {
+                                if validate_statement(&new_stmt) {
+                                    stmt = *new_stmt;
+                                    iteration_changed = true;
+                                    changed = true;
+                                    debug!(
+                                        rule_id = rule.id(),
+                                        iteration = iteration,
+                                        "Safe rewrite applied"
+                                    );
+                                    break;
+                                }
                             }
+                        }
+                        if iteration_changed {
+                            break;
                         }
                     }
                     MatchResult::NotMatched { reason } => {
@@ -117,7 +123,8 @@ impl RewriteEngine {
         for rule in &manual_rules {
             match rule.matches(ctx, &stmt) {
                 MatchResult::Matched => {
-                    if let Some(action) = rule.apply(ctx, &stmt) {
+                    let actions = rule.apply(ctx, &stmt);
+                    for action in actions {
                         suggestions.push(Suggestion {
                             rule_id: rule.id().to_string(),
                             rule_description: rule.description().to_string(),

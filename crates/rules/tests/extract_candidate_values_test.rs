@@ -82,6 +82,35 @@ fn format_probe(suggestions: &[Suggestion]) -> Option<String> {
     })
 }
 
+#[allow(dead_code)]
+fn assert_suggestion_count(sql: &str, expected_count: usize) -> Vec<Suggestion> {
+    let (_statements, suggestions) = test_suggest(sql);
+    assert_eq!(
+        suggestions.len(),
+        expected_count,
+        "Expected {} suggestion(s) for SQL: '{}'",
+        expected_count,
+        sql
+    );
+    suggestions
+}
+
+fn assert_suggestion_count_with_vars(
+    sql: &str,
+    vars: HashSet<String>,
+    expected_count: usize,
+) -> Vec<Suggestion> {
+    let (_statements, suggestions) = test_suggest_with_vars(sql, vars);
+    assert_eq!(
+        suggestions.len(),
+        expected_count,
+        "Expected {} suggestion(s) for SQL: '{}'",
+        expected_count,
+        sql
+    );
+    suggestions
+}
+
 // ── Level 1: Core patterns ──
 
 #[test]
@@ -456,5 +485,151 @@ fn test_probe_in_list_subquery_preserved() {
         probe.contains("status"),
         "Probe must reference status: {}",
         probe
+    );
+}
+
+// ── Level 9: CUD + subquery multi-probe support ──
+
+#[test]
+fn test_update_with_in_subquery() {
+    let mut vars = HashSet::new();
+    vars.insert("v_status".to_string());
+    vars.insert("v_cat".to_string());
+    let suggestions = assert_suggestion_count_with_vars(
+        "UPDATE orders SET status = 'done' WHERE status = v_status AND order_id IN (SELECT order_id FROM items WHERE category = v_cat)",
+        vars,
+        2,
+    );
+    let probes: Vec<String> = suggestions
+        .iter()
+        .filter_map(|s| format_probe(std::slice::from_ref(s)))
+        .collect();
+    assert!(
+        probes
+            .iter()
+            .any(|p| p.contains("items") && p.contains("category")),
+        "Expected probe from items subquery, got: {:?}",
+        probes
+    );
+    assert!(
+        probes.iter().any(|p| p.contains("status")),
+        "Expected probe referencing status (outer scope), got: {:?}",
+        probes
+    );
+}
+
+#[test]
+fn test_delete_with_exists_subquery() {
+    let (_statements, suggestions) = test_suggest(
+        "DELETE FROM orders WHERE EXISTS (SELECT 1 FROM items WHERE items.category = v_cat AND items.region = 'EAST')",
+    );
+    assert!(!suggestions.is_empty(), "Should match EXISTS subquery");
+    let probe = format_probe(&suggestions).expect("Expected probe");
+    assert!(
+        probe.contains("category"),
+        "Probe must reference category: {}",
+        probe
+    );
+    assert!(
+        probe.contains("region"),
+        "Probe must retain region filter: {}",
+        probe
+    );
+}
+
+#[test]
+fn test_insert_select() {
+    let (_statements, suggestions) = test_suggest(
+        "INSERT INTO archive (id, name) SELECT id, name FROM orders WHERE orders.status = v_status",
+    );
+    assert!(!suggestions.is_empty(), "Should match INSERT...SELECT");
+    let probe = format_probe(&suggestions).expect("Expected probe");
+    assert!(
+        probe.contains("status"),
+        "Probe must reference status: {}",
+        probe
+    );
+    assert!(
+        probe.contains("orders"),
+        "Probe must reference orders: {}",
+        probe
+    );
+}
+
+#[test]
+fn test_update_plain_no_subquery() {
+    let mut vars = HashSet::new();
+    vars.insert("v_old".to_string());
+    let suggestions = assert_suggestion_count_with_vars(
+        "UPDATE orders SET status = v_new WHERE status = v_old AND region = 'EAST'",
+        vars,
+        1,
+    );
+    let probe = format_probe(&suggestions).expect("Expected 1 probe");
+    assert!(
+        probe.contains("status"),
+        "Probe must reference status: {}",
+        probe
+    );
+}
+
+#[test]
+fn test_two_in_subqueries() {
+    let (_statements, suggestions) = test_suggest(
+        "SELECT * FROM t WHERE t.col = v_col AND a IN (SELECT x FROM t1 WHERE t1.y = v_y) AND b IN (SELECT z FROM t2 WHERE t2.w = v_w)",
+    );
+    assert!(
+        suggestions.len() >= 3,
+        "Expected 3+ probes, got {}",
+        suggestions.len()
+    );
+    let probes: Vec<String> = suggestions
+        .iter()
+        .filter_map(|s| format_probe(std::slice::from_ref(s)))
+        .collect();
+    assert!(
+        probes.iter().any(|p| p.contains("t1") && p.contains("y")),
+        "Missing t1 probe"
+    );
+    assert!(
+        probes.iter().any(|p| p.contains("t2") && p.contains("w")),
+        "Missing t2 probe"
+    );
+}
+
+#[test]
+fn test_insert_values_no_probe() {
+    let (_statements, suggestions) = test_suggest("INSERT INTO t (a, b) VALUES (1, 2)");
+    assert!(suggestions.is_empty(), "INSERT...VALUES should not match");
+}
+
+#[test]
+fn test_merge_on_condition() {
+    let mut vars = HashSet::new();
+    vars.insert("v_status".to_string());
+    let (_statements, suggestions) = test_suggest_with_vars(
+        "MERGE INTO target t USING source s ON t.id = s.id AND t.status = v_status",
+        vars,
+    );
+    assert!(!suggestions.is_empty(), "Should match MERGE ON condition");
+}
+
+#[test]
+fn test_nested_subquery() {
+    let (_statements, suggestions) = test_suggest(
+        "SELECT * FROM t WHERE t.col = v_col AND col IN (SELECT a FROM t1 WHERE b IN (SELECT c FROM t2 WHERE t2.d = v_d))",
+    );
+    assert!(
+        suggestions.len() >= 2,
+        "Expected 2+ probes from nested subqueries, got {}",
+        suggestions.len()
+    );
+    let probes: Vec<String> = suggestions
+        .iter()
+        .filter_map(|s| format_probe(std::slice::from_ref(s)))
+        .collect();
+    assert!(
+        probes.iter().any(|p| p.contains("t2") && p.contains("d")),
+        "Missing innermost probe"
     );
 }
