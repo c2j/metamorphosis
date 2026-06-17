@@ -26,6 +26,17 @@ pub(crate) struct EqPredicateCollector {
     pub has_subquery: bool,
     table_aliases: HashSet<String>,
     known_variables: Option<HashSet<String>>,
+    /// Single-part ColumnRef names identified as parameters during classification.
+    /// Populated by `handle_equality` when the opposing side of a ColumnRef=ColumnRef
+    /// equality is classified as a parameter (single-part, not a known table alias).
+    /// Stored lowercased for case-insensitive matching — SQL identifiers are
+    /// case-insensitive, so `v_gffsrq` in an equality and `V_GFFSRQ` in a
+    /// BETWEEN must resolve to the same parameter.
+    param_names: HashSet<String>,
+    /// True if any classified ColumnRef=ColumnRef equality referenced a column
+    /// whose qualifier is multi-part but unknown in the current scope's FROM
+    /// (i.e., a correlated reference to an outer query).
+    pub(crate) has_correlated_ref: bool,
 }
 
 impl EqPredicateCollector {
@@ -53,26 +64,46 @@ impl EqPredicateCollector {
             has_subquery: false,
             table_aliases,
             known_variables,
+            param_names: HashSet::new(),
+            has_correlated_ref: false,
         }
     }
 
     fn is_known_table(&self, parts: &[Ident]) -> bool {
-        parts
-            .first()
-            .is_some_and(|p| self.table_aliases.contains(p.as_str()))
+        parts.first().is_some_and(|p| {
+            let lower = p.as_str().to_lowercase();
+            self.table_aliases.contains(lower.as_str())
+        })
+    }
+
+    /// Like `is_known_table`, but also returns true for qualified references
+    /// (`outer.col`) whose prefix belongs to an outer query scope. These are
+    /// correlated references, not user parameters — only unqualified names
+    /// that aren't local table aliases are treated as bind parameters.
+    fn is_known_table_or_correlated(&self, parts: &[Ident]) -> bool {
+        self.is_known_table(parts) || parts.len() > 1
     }
 
     fn classify_column_pair(&self, l_parts: &[Ident], r_parts: &[Ident]) -> (bool, bool) {
         if let Some(ref vars) = self.known_variables {
             let l_name = l_parts.last();
             let r_name = r_parts.last();
-            let l_is_var = l_name.is_some_and(|n| vars.contains(n.as_str()));
-            let r_is_var = r_name.is_some_and(|n| vars.contains(n.as_str()));
+            let l_is_var = l_name.is_some_and(|n| {
+                let lower = n.as_str().to_lowercase();
+                vars.contains(lower.as_str())
+            });
+            let r_is_var = r_name.is_some_and(|n| {
+                let lower = n.as_str().to_lowercase();
+                vars.contains(lower.as_str())
+            });
             if l_is_var || r_is_var {
                 return (!l_is_var, !r_is_var);
             }
         }
-        (self.is_known_table(l_parts), self.is_known_table(r_parts))
+        (
+            self.is_known_table_or_correlated(l_parts),
+            self.is_known_table_or_correlated(r_parts),
+        )
     }
 
     pub(crate) fn handle_equality(&mut self, left: &Expr, right: &Expr) {
@@ -106,12 +137,25 @@ impl EqPredicateCollector {
                 match (l_is_table, r_is_table) {
                     (true, false) => {
                         self.tier1.push(l_parts.clone());
+                        if let Some(name) = r_parts.last() {
+                            self.param_names.insert(name.as_str().to_lowercase());
+                        }
                     }
                     (false, true) => {
                         self.tier1.push(r_parts.clone());
+                        if let Some(name) = l_parts.last() {
+                            self.param_names.insert(name.as_str().to_lowercase());
+                        }
                     }
                     _ => {
                         self.keep_exprs.push(make_binary_eq(left, right));
+                        // Detect correlated refs: either side has multi-part
+                        // name whose prefix is NOT in current scope's aliases.
+                        let l_correlated = l_parts.len() > 1 && !self.is_known_table(l_parts);
+                        let r_correlated = r_parts.len() > 1 && !self.is_known_table(r_parts);
+                        if l_correlated || r_correlated {
+                            self.has_correlated_ref = true;
+                        }
                     }
                 }
             }
@@ -130,10 +174,168 @@ impl EqPredicateCollector {
         }
     }
 
+    /// Tier1-only classifier used by [`extract_eq_from_non_and`].
+    ///
+    /// Pushes to `tier1` and `param_names` only; never touches `non_eq` or
+    /// `keep_exprs`. This honors the contract documented on
+    /// [`extract_eq_from_non_and`]: "without modifying the non_eq/keep_exprs
+    /// collections".
+    ///
+    /// Duplicates a subset of [`handle_equality`] but deliberately so — a
+    /// single boolean flag on `handle_equality` would couple two contracts.
+    fn classify_for_tier1_only(&mut self, left: &Expr, right: &Expr) {
+        match (left, right) {
+            (
+                Expr::ColumnRef(name),
+                Expr::Parameter(_)
+                | Expr::MyBatisParam(_)
+                | Expr::MyBatisRawExpr(_)
+                | Expr::JdbcParam,
+            )
+            | (
+                Expr::Parameter(_)
+                | Expr::MyBatisParam(_)
+                | Expr::MyBatisRawExpr(_)
+                | Expr::JdbcParam,
+                Expr::ColumnRef(name),
+            ) => {
+                self.tier1.push(name.clone());
+            }
+            (Expr::ColumnRef(l_parts), Expr::ColumnRef(r_parts)) => {
+                let (l_is_table, r_is_table) = self.classify_column_pair(l_parts, r_parts);
+                match (l_is_table, r_is_table) {
+                    (true, false) => {
+                        self.tier1.push(l_parts.clone());
+                        if let Some(n) = r_parts.last() {
+                            self.param_names.insert(n.as_str().to_lowercase());
+                        }
+                    }
+                    (false, true) => {
+                        self.tier1.push(r_parts.clone());
+                        if let Some(n) = l_parts.last() {
+                            self.param_names.insert(n.as_str().to_lowercase());
+                        }
+                    }
+                    _ => {} // join condition: do NOT push to keep_exprs here
+                }
+            }
+            _ => {} // deliberately no-op for non-tier1 cases
+        }
+    }
+
+    /// Classify a BETWEEN expression for tier1 extraction.
+    ///
+    /// If the BETWEEN references any parameter (explicit param node, unqualified
+    /// ColumnRef not in table aliases, or expression containing such), all
+    /// known-table ColumnRefs in the BETWEEN are pushed to tier1 so the probe
+    /// GROUP BY shows valid ranges/values for the parameter.
+    fn handle_between(&mut self, expr: &Expr, low: &Expr, high: &Expr) {
+        let (params, cols) = {
+            let mut params = Vec::new();
+            let mut cols = Vec::new();
+            for part in &[expr, low, high] {
+                classify_expr_columns(part, self, &mut params, &mut cols);
+            }
+            (params, cols)
+        };
+
+        let has_param = !params.is_empty()
+            || contains_param(expr)
+            || contains_param(low)
+            || contains_param(high);
+
+        if has_param {
+            for name in params {
+                self.param_names.insert(name);
+            }
+            for col in cols {
+                self.tier1.push(col);
+            }
+        }
+    }
+
+    /// Classify a LIKE expression for tier1 extraction. Same principle as
+    /// `handle_between`: if the LIKE is param-bearing, extract the subject
+    /// column (and any other known-table columns in the pattern) to tier1.
+    fn handle_like(
+        &mut self,
+        subj: &Expr,
+        pattern: &Expr,
+        escape: &Option<Box<Expr>>,
+    ) {
+        let (params, cols) = {
+            let mut params = Vec::new();
+            let mut cols = Vec::new();
+            classify_expr_columns(subj, self, &mut params, &mut cols);
+            classify_expr_columns(pattern, self, &mut params, &mut cols);
+            if let Some(e) = escape {
+                classify_expr_columns(e, self, &mut params, &mut cols);
+            }
+            (params, cols)
+        };
+
+        let has_param = !params.is_empty()
+            || contains_param(subj)
+            || contains_param(pattern)
+            || escape.as_ref().is_some_and(|e| contains_param(e));
+
+        if has_param {
+            for name in params {
+                self.param_names.insert(name);
+            }
+            for col in cols {
+                self.tier1.push(col);
+            }
+        }
+    }
+
+    /// Pre-scan WHERE for stored-proc variables before equality classification.
+    /// An unqualified single-part ColumnRef not in table aliases is treated as
+    /// a parameter, UNLESS it appears as the column side of a `col = literal`
+    /// equality (which is always a data filter, never a constant condition on
+    /// a variable). This catches variables that only appear in LIKE, IN, or
+    /// IS NULL — contexts the equality classifier does not cover.
+    fn pre_scan_params(&mut self, expr: &Expr) {
+        let literal_cols = collect_literal_compared_cols(expr);
+        let params = {
+            let mut params = Vec::new();
+            let mut cols = Vec::new();
+            classify_expr_columns(expr, self, &mut params, &mut cols);
+            params
+        };
+        for name in params {
+            if !literal_cols.contains(&name) {
+                self.param_names.insert(name);
+            }
+        }
+    }
+
+    /// True if `expr` contains any `ColumnRef` whose last identifier matches a name
+    /// in `self.param_names`. Used to filter non-equality expressions that
+    /// reference stored-proc variables not represented as `Expr::Parameter`.
+    fn references_classified_param(&self, expr: &Expr) -> bool {
+        let names = &self.param_names;
+        if names.is_empty() {
+            return false;
+        }
+        walk_column_refs(expr, &|parts| {
+            parts.last().is_some_and(|p| {
+                let lower = p.as_str().to_lowercase();
+                names.contains(lower.as_str())
+            })
+        })
+    }
+
+    /// True if `expr` contains any parameter-like token (`Parameter`, `JdbcParam`,
+    /// etc.) or any classified stored-proc variable reference.
+    pub(crate) fn contains_classified_param(&self, expr: &Expr) -> bool {
+        contains_param(expr) || self.references_classified_param(expr)
+    }
+
     pub(crate) fn non_param_exprs(&self) -> Vec<Expr> {
         self.non_eq
             .iter()
-            .filter(|e| !contains_param(e))
+            .filter(|e| !self.contains_classified_param(e))
             .cloned()
             .collect()
     }
@@ -164,6 +366,7 @@ pub(crate) fn collect_eq_predicates(
 ) -> EqPredicateCollector {
     let mut collector = EqPredicateCollector::new(from, known_variables.cloned());
     if let Some(expr) = where_clause {
+        collector.pre_scan_params(expr);
         collect_from(expr, &mut collector);
     }
     collector
@@ -207,6 +410,24 @@ pub(crate) fn collect_from(expr: &Expr, col: &mut EqPredicateCollector) {
                 col.non_eq.push(expr.clone());
             }
         },
+        Expr::Between {
+            expr: subj,
+            low,
+            high,
+            ..
+        } => {
+            col.handle_between(subj, low, high);
+            col.non_eq.push(expr.clone());
+        }
+        Expr::Like {
+            expr: subj,
+            pattern,
+            escape,
+            ..
+        } => {
+            col.handle_like(subj, pattern, escape);
+            col.non_eq.push(expr.clone());
+        }
         _ => {
             col.non_eq.push(expr.clone());
         }
@@ -222,9 +443,7 @@ pub(crate) fn extract_eq_from_non_and(expr: &Expr, col: &mut EqPredicateCollecto
         Expr::BinaryOp { left, op, right } => {
             let op_upper = op.to_uppercase();
             match op_upper.as_str() {
-                "=" => {
-                    col.handle_equality(left, right);
-                }
+                "=" => col.classify_for_tier1_only(left, right),
                 _ => {
                     extract_eq_from_non_and(left, col);
                     extract_eq_from_non_and(right, col);
@@ -234,6 +453,18 @@ pub(crate) fn extract_eq_from_non_and(expr: &Expr, col: &mut EqPredicateCollecto
         Expr::Parenthesized(inner) => {
             extract_eq_from_non_and(inner, col);
         }
+        Expr::Between {
+            expr: subj,
+            low,
+            high,
+            ..
+        } => col.handle_between(subj, low, high),
+        Expr::Like {
+            expr: subj,
+            pattern,
+            escape,
+            ..
+        } => col.handle_like(subj, pattern, escape),
         _ => {}
     }
 }
@@ -270,17 +501,17 @@ fn collect_table_aliases_recursive(tr: &TableRef, aliases: &mut HashSet<String>)
     match tr {
         TableRef::Table { name, alias, .. } => {
             if let Some(a) = alias {
-                aliases.insert(a.clone());
+                aliases.insert(a.to_lowercase());
             }
             if let Some(bare) = name.last() {
-                aliases.insert(bare.as_str().to_string());
+                aliases.insert(bare.as_str().to_lowercase());
             }
         }
         TableRef::Subquery { alias, .. }
         | TableRef::FunctionCall { alias, .. }
         | TableRef::Values { alias, .. } => {
             if let Some(a) = alias {
-                aliases.insert(a.clone());
+                aliases.insert(a.to_lowercase());
             }
         }
         TableRef::Join { left, right, .. } => {
@@ -539,6 +770,194 @@ pub(crate) fn references_cte(from: &[TableRef], cte_name: &str) -> bool {
         TableRef::Table { name, .. } => name.last().is_some_and(|i| i.as_str() == cte_name),
         _ => false,
     })
+}
+
+/// Walk an expression tree and call `f` on each [`Expr::ColumnRef`] found.
+///
+/// Returns `true` if any call to `f` returns `true`. Mirrors the variant
+/// coverage of [`contains_param`] to ensure consistent parameter detection
+/// for both AST-level parameters (`Parameter`, `JdbcParam`, etc.) and
+/// stored-proc variables that appear as unqualified `ColumnRef` nodes.
+pub(crate) fn walk_column_refs(expr: &Expr, f: &dyn Fn(&[Ident]) -> bool) -> bool {
+    match expr {
+        Expr::ColumnRef(parts) => f(parts),
+        Expr::BinaryOp { left, right, .. } => {
+            walk_column_refs(left, f) || walk_column_refs(right, f)
+        }
+        Expr::UnaryOp { expr, .. } => walk_column_refs(expr, f),
+        Expr::Parenthesized(inner) => walk_column_refs(inner, f),
+        Expr::IsNull { expr, .. } => walk_column_refs(expr, f),
+        Expr::FunctionCall { args, filter, .. } => {
+            args.iter().any(|a| walk_column_refs(a, f))
+                || filter
+                    .as_ref()
+                    .is_some_and(|filt| walk_column_refs(filt, f))
+        }
+        Expr::Case {
+            operand,
+            whens,
+            else_expr,
+        } => {
+            operand.as_ref().is_some_and(|e| walk_column_refs(e, f))
+                || whens
+                    .iter()
+                    .any(|w| walk_column_refs(&w.condition, f) || walk_column_refs(&w.result, f))
+                || else_expr.as_ref().is_some_and(|e| walk_column_refs(e, f))
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => walk_column_refs(expr, f) || walk_column_refs(low, f) || walk_column_refs(high, f),
+        Expr::InList { list, .. } => list.iter().any(|e| walk_column_refs(e, f)),
+        Expr::InSubquery { .. } | Expr::Exists(_) | Expr::Subquery(_) => false,
+        Expr::TypeCast { expr, .. } => walk_column_refs(expr, f),
+        Expr::Treat { expr, .. } => walk_column_refs(expr, f),
+        Expr::Array(exprs) => exprs.iter().any(|e| walk_column_refs(e, f)),
+        Expr::Subscript {
+            object,
+            lower,
+            upper,
+            ..
+        } => {
+            walk_column_refs(object, f)
+                || lower.as_ref().is_some_and(|e| walk_column_refs(e, f))
+                || upper.as_ref().is_some_and(|e| walk_column_refs(e, f))
+        }
+        _ => false,
+    }
+}
+
+/// Recursively walk `expr` and classify every `ColumnRef` into either a
+/// parameter name (single-part, not a known table alias) or a known-table
+/// column (multi-part or in aliases). Used by `handle_between` to extract
+/// range-bound columns into tier1 when the BETWEEN is parameter-bearing.
+fn classify_expr_columns(
+    expr: &Expr,
+    collector: &EqPredicateCollector,
+    params: &mut Vec<String>,
+    cols: &mut Vec<ObjectName>,
+) {
+    match expr {
+        Expr::ColumnRef(parts) => {
+            if parts.len() == 1 && !collector.is_known_table(parts) {
+                if let Some(n) = parts.last() {
+                    params.push(n.as_str().to_lowercase());
+                }
+            } else if collector.is_known_table_or_correlated(parts) {
+                cols.push(parts.clone());
+            }
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            classify_expr_columns(left, collector, params, cols);
+            classify_expr_columns(right, collector, params, cols);
+        }
+        Expr::UnaryOp { expr, .. } => classify_expr_columns(expr, collector, params, cols),
+        Expr::Parenthesized(inner) => classify_expr_columns(inner, collector, params, cols),
+        Expr::IsNull { expr, .. } => classify_expr_columns(expr, collector, params, cols),
+        Expr::FunctionCall { args, filter, .. } => {
+            for a in args {
+                classify_expr_columns(a, collector, params, cols);
+            }
+            if let Some(f) = filter {
+                classify_expr_columns(f, collector, params, cols);
+            }
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            classify_expr_columns(expr, collector, params, cols);
+            classify_expr_columns(low, collector, params, cols);
+            classify_expr_columns(high, collector, params, cols);
+        }
+        Expr::TypeCast { expr, .. } => classify_expr_columns(expr, collector, params, cols),
+        Expr::Treat { expr, .. } => classify_expr_columns(expr, collector, params, cols),
+        Expr::Array(exprs) => {
+            for e in exprs {
+                classify_expr_columns(e, collector, params, cols);
+            }
+        }
+        Expr::Like {
+            expr,
+            pattern,
+            escape,
+            ..
+        } => {
+            classify_expr_columns(expr, collector, params, cols);
+            classify_expr_columns(pattern, collector, params, cols);
+            if let Some(e) = escape {
+                classify_expr_columns(e, collector, params, cols);
+            }
+        }
+        Expr::InList { expr, list, .. } => {
+            classify_expr_columns(expr, collector, params, cols);
+            for item in list {
+                classify_expr_columns(item, collector, params, cols);
+            }
+        }
+        Expr::Case {
+            operand,
+            whens,
+            else_expr,
+        } => {
+            if let Some(o) = operand {
+                classify_expr_columns(o, collector, params, cols);
+            }
+            for w in whens {
+                classify_expr_columns(&w.condition, collector, params, cols);
+                classify_expr_columns(&w.result, collector, params, cols);
+            }
+            if let Some(e) = else_expr {
+                classify_expr_columns(e, collector, params, cols);
+            }
+        }
+        Expr::Subscript {
+            object,
+            lower,
+            upper,
+            ..
+        } => {
+            classify_expr_columns(object, collector, params, cols);
+            if let Some(l) = lower {
+                classify_expr_columns(l, collector, params, cols);
+            }
+            if let Some(u) = upper {
+                classify_expr_columns(u, collector, params, cols);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Collect last-identifier names of ColumnRefs that appear in `col = literal`
+/// or `literal = col` equalities. In WHERE clauses, these are always data
+/// filters on columns, never constant conditions on stored-proc variables.
+fn collect_literal_compared_cols(expr: &Expr) -> HashSet<String> {
+    let mut cols = HashSet::new();
+    fn walk(expr: &Expr, cols: &mut HashSet<String>) {
+        match expr {
+            Expr::BinaryOp { left, op, right } => {
+                match op.to_uppercase().as_str() {
+                    "=" => match (left.as_ref(), right.as_ref()) {
+                        (Expr::ColumnRef(name), Expr::Literal(_))
+                        | (Expr::Literal(_), Expr::ColumnRef(name)) => {
+                            if let Some(n) = name.last() {
+                                cols.insert(n.as_str().to_lowercase());
+                            }
+                        }
+                        _ => {}
+                    },
+                    "AND" | "OR" => {
+                        walk(left, cols);
+                        walk(right, cols);
+                    }
+                    _ => {}
+                }
+            }
+            Expr::Parenthesized(inner) => walk(inner, cols),
+            _ => {}
+        }
+    }
+    walk(expr, &mut cols);
+    cols
 }
 
 pub(crate) fn contains_param(expr: &Expr) -> bool {

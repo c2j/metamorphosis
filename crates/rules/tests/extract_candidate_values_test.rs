@@ -1,4 +1,4 @@
-use metamorphosis_core::types::RewriteAction;
+use metamorphosis_core::types::{Confidence, RewriteAction};
 use metamorphosis_core::{RewriteConfig, RewriteContext, RewriteEngine, RuleRegistry, Suggestion};
 use metamorphosis_rules::extract_candidate_values::ExtractCandidateValues;
 use ogsql_parser::ast::Statement;
@@ -158,6 +158,75 @@ fn test_literal_and_param() {
 }
 
 #[test]
+fn test_mixed_case_parameter_filtered_from_probe() {
+    // Regression: SQL identifiers are case-insensitive. When the same stored-proc
+    // variable appears in different cases across predicates (e.g., `v_gffsrq` in
+    // an equality and `V_GFFSRQ` in a BETWEEN), both must be recognized as the
+    // same parameter. The probe WHERE must filter BOTH the equality and the
+    // BETWEEN — otherwise the probe is still constrained by the current parameter
+    // value, defeating its purpose.
+    //
+    // Origin: case5.sql lines 17-18:
+    //   AND v.accountdate = v_gffsrq           ← lowercase, builds param_names
+    //   AND V_GFFSRQ BETWEEN ... AND ...        ← uppercase, must match param_names
+    let (_statements, suggestions) = test_suggest(
+        "INSERT INTO AAA (seq_no, coin_code, tdstockbal) \
+         SELECT DISTINCT p_i_seq_no, v.coin_code, v.tdstockbal \
+         FROM PAR A, VAB v \
+         WHERE a.share_partner_code = v_share_partner_code \
+           AND a.fund_code = v.fund_code \
+           AND v.accountdate = v_gffsrq \
+           AND V_GFFSRQ BETWEEN a.inure_begin_date AND a.inure_end_date \
+           AND v.tdstockbal <> 0",
+    );
+    assert!(
+        !suggestions.is_empty(),
+        "Rule should match: parameterized equalities exist"
+    );
+
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+
+    let gby = upper.find("GROUP BY").expect("Probe must have GROUP BY");
+    let (before, after) = (&upper[..gby], &upper[gby..]);
+
+    assert!(
+        after.contains("SHARE_PARTNER_CODE"),
+        "GROUP BY must include share_partner_code.\nProbe: {}",
+        probe
+    );
+    assert!(
+        after.contains("ACCOUNTDATE"),
+        "GROUP BY must include accountdate.\nProbe: {}",
+        probe
+    );
+
+    assert!(
+        !before.contains("BETWEEN"),
+        "BETWEEN on stored-proc variable V_GFFSRQ (uppercase variant of v_gffsrq) \
+         must be removed from probe WHERE — parameter names are case-insensitive.\nProbe: {}",
+        probe
+    );
+
+    assert!(
+        !before.contains("V_GFFSRQ"),
+        "v_gffsrq must not appear in probe WHERE (neither in equality nor BETWEEN).\nProbe: {}",
+        probe
+    );
+
+    assert!(
+        before.contains("FUND_CODE"),
+        "Join condition a.fund_code = v.fund_code must be preserved.\nProbe: {}",
+        probe
+    );
+    assert!(
+        upper.contains("ORDER BY") && upper.contains("CNT"),
+        "Probe must have ORDER BY cnt DESC: {}",
+        probe
+    );
+}
+
+#[test]
 fn test_param_only_no_literal() {
     let mut vars = HashSet::new();
     vars.insert("p_order_id".to_string());
@@ -177,6 +246,110 @@ fn test_param_only_no_literal() {
     assert!(
         !upper.contains("WHERE"),
         "Probe with no non-param conditions should have no WHERE clause: {}",
+        probe
+    );
+}
+
+#[test]
+fn test_param_between_two_columns_extracts_bounds() {
+    let (_statements, suggestions) = test_suggest(
+        "SELECT t.a FROM dat_t t WHERE t.status = '1' AND p_val BETWEEN t.lo_bound AND t.hi_bound",
+    );
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+    let gby = upper.find("GROUP BY").expect("Probe must have GROUP BY");
+    let (before, after) = (&upper[..gby], &upper[gby..]);
+
+    assert!(
+        after.contains("LO_BOUND") && after.contains("HI_BOUND"),
+        "GROUP BY must include both BETWEEN bound columns so user can see valid ranges.\nProbe: {}",
+        probe
+    );
+    assert!(
+        !before.contains("BETWEEN"),
+        "Param-bearing BETWEEN must be removed from probe WHERE.\nProbe: {}",
+        probe
+    );
+    assert!(
+        !before.contains("P_VAL"),
+        "Parameter p_val must not appear in probe WHERE.\nProbe: {}",
+        probe
+    );
+    assert!(
+        before.contains("STATUS"),
+        "Non-param literal condition t.status = '1' must be preserved.\nProbe: {}",
+        probe
+    );
+}
+
+#[test]
+fn test_col_between_two_params_extracts_subject() {
+    let (_statements, suggestions) = test_suggest(
+        "SELECT t.a FROM dat_t t WHERE t.status = '1' AND t.date_col BETWEEN p_start AND p_end",
+    );
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+    let gby = upper.find("GROUP BY").expect("Probe must have GROUP BY");
+    let (before, after) = (&upper[..gby], &upper[gby..]);
+
+    assert!(
+        after.contains("DATE_COL"),
+        "GROUP BY must include subject column t.date_col so user can see what values exist.\nProbe: {}",
+        probe
+    );
+    assert!(
+        !before.contains("BETWEEN"),
+        "Param-bearing BETWEEN must be removed from probe WHERE.\nProbe: {}",
+        probe
+    );
+    assert!(
+        !before.contains("P_START") && !before.contains("P_END"),
+        "Parameters p_start/p_end must not appear in probe WHERE.\nProbe: {}",
+        probe
+    );
+}
+
+#[test]
+fn test_col_between_nvl_params_extracts_subject() {
+    let (_statements, suggestions) = test_suggest(
+        "SELECT t.a FROM dat_t t WHERE t.status = '1' \
+         AND t.date_col BETWEEN nvl(p_start, '19000101') AND nvl(p_end, '99991231')",
+    );
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+    let gby = upper.find("GROUP BY").expect("Probe must have GROUP BY");
+    let (before, after) = (&upper[..gby], &upper[gby..]);
+
+    assert!(
+        after.contains("DATE_COL"),
+        "GROUP BY must include t.date_col even when bounds are function-wrapped params.\nProbe: {}",
+        probe
+    );
+    assert!(
+        !before.contains("BETWEEN"),
+        "BETWEEN with nvl(param,...) bounds must be removed from probe WHERE.\nProbe: {}",
+        probe
+    );
+}
+
+#[test]
+fn test_non_param_between_preserved_in_where() {
+    let (_statements, suggestions) = test_suggest(
+        "SELECT t.a FROM dat_t t WHERE t.status = p_status AND t.date_col BETWEEN '20200101' AND '20201231'",
+    );
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+    let gby = upper.find("GROUP BY").expect("Probe must have GROUP BY");
+    let (before, _after) = (&upper[..gby], &upper[gby..]);
+
+    assert!(
+        before.contains("BETWEEN"),
+        "Non-param BETWEEN (literal bounds) must stay in probe WHERE.\nProbe: {}",
+        probe
+    );
+    assert!(
+        !before.contains("P_STATUS"),
+        "Parameter equality t.status = p_status must be removed; t.status in GROUP BY.\nProbe: {}",
         probe
     );
 }
@@ -631,5 +804,342 @@ fn test_nested_subquery() {
     assert!(
         probes.iter().any(|p| p.contains("t2") && p.contains("d")),
         "Missing innermost probe"
+    );
+}
+
+// ── Level 10: Comma-join — join condition vs parameterized equality ──
+
+#[test]
+fn test_comma_join_condition_excluded_from_group_by() {
+    // Regression guard: In a comma-separated FROM (implicit join), a WHERE
+    // equality `col = col` where BOTH sides reference known table aliases is a
+    // JOIN condition. It must be preserved in the probe WHERE (keep_exprs) and
+    // must NOT leak into GROUP BY (tier1).
+    //
+    // Origin: a real-world INSERT...SELECT where `a.fund_code = v.fund_code`
+    // (table join on VAB.fund_code) was misanalyzed as `a.fund_code = v_fund_code`
+    // (parameterized equality) because the `.` was misread as `_`, causing
+    // fund_code to erroneously appear in GROUP BY instead of WHERE.
+    let (_statements, suggestions) = test_suggest(
+        "INSERT INTO AAA (seq_no, coin_code, tdstockbal) \
+         SELECT DISTINCT p_i_seq_no, v.coin_code, v.tdstockbal \
+         FROM PAR A, VAB v \
+         WHERE a.share_partner_code = v_share_partner_code \
+           AND a.fund_code = v.fund_code \
+           AND v.accountdate = v_gffsrq \
+           AND v_gffsrq BETWEEN a.inure_begin_date AND a.inure_end_date \
+           AND v.tdstockbal <> 0",
+    );
+    assert!(
+        !suggestions.is_empty(),
+        "Rule should match: parameterized equalities exist"
+    );
+    assert_eq!(
+        suggestions.len(),
+        1,
+        "Expected exactly 1 probe (no subqueries in WHERE)"
+    );
+
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+
+    let gby = upper.find("GROUP BY").expect("Probe must have GROUP BY");
+    let (before, after) = (&upper[..gby], &upper[gby..]);
+
+    assert!(
+        !after.contains("FUND_CODE"),
+        "Join column 'fund_code' must NOT appear in GROUP BY — \
+         a.fund_code = v.fund_code is a table join, not a parameter.\nProbe: {}",
+        probe
+    );
+    assert!(
+        before.contains("FUND_CODE"),
+        "Join condition 'a.fund_code = v.fund_code' must be preserved in WHERE.\nProbe: {}",
+        probe
+    );
+
+    assert!(
+        after.contains("SHARE_PARTNER_CODE"),
+        "GROUP BY must include parameterized column 'share_partner_code'.\nProbe: {}",
+        probe
+    );
+    assert!(
+        after.contains("ACCOUNTDATE"),
+        "GROUP BY must include parameterized column 'accountdate'.\nProbe: {}",
+        probe
+    );
+
+    // BETWEEN references v_gffsrq which is a classified stored-proc variable.
+    // The expression cannot be evaluated at probe time (param value unknown),
+    // so it is correctly removed from the probe WHERE (see Design Decision 2).
+    assert!(
+        !before.contains("BETWEEN"),
+        "BETWEEN on stored-proc variable must be removed from probe WHERE.\nProbe: {}",
+        probe
+    );
+    assert!(
+        before.contains("TDSTOCKBAL"),
+        "'v.tdstockbal <> 0' must be preserved in WHERE.\nProbe: {}",
+        probe
+    );
+}
+
+#[test]
+fn test_correlated_ref_in_subquery_no_probe() {
+    // Regression guard: An EXISTS subquery whose only equality is a correlated
+    // reference (v.label_code = a.label_code, where `v` is an outer alias) has
+    // no user-controllable parameter. Its data availability depends on the data
+    // relationship between tables, not on an input value. No candidate value
+    // probe should be generated for such a subquery.
+    let (_statements, suggestions) = test_suggest(
+        "INSERT INTO AAA (seq_no, coin_code, tdstockbal) \
+         SELECT DISTINCT p_i_seq_no, v.coin_code, v.tdstockbal \
+         FROM PAR A, VAB v \
+         WHERE a.share_partner_code = v_share_partner_code \
+           AND a.fund_code = v.fund_code \
+           AND v.accountdate = v_gffsrq \
+           AND v_gffsrq BETWEEN a.inure_begin_date AND a.inure_end_date \
+           AND EXISTS (SELECT 1 FROM PAR1 a \
+                       WHERE a.account_type IN ('01', '02') \
+                         AND v.label_code = a.label_code) \
+           AND v.tdstockbal <> 0",
+    );
+    assert_eq!(
+        suggestions.len(),
+        1,
+        "Expected 1 probe (main scope only); EXISTS subquery with only correlated ref should not produce a probe"
+    );
+
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+    assert!(
+        upper.contains("SHARE_PARTNER_CODE") && upper.contains("ACCOUNTDATE"),
+        "Probe must be the main-scope probe grouping on parameterized columns:\n{}",
+        probe
+    );
+    let group_by = upper.find("GROUP BY").unwrap();
+    assert!(
+        !upper[group_by..].contains("LABEL_CODE"),
+        "No probe should group on label_code (correlated ref column):\n{}",
+        probe
+    );
+}
+
+// ── T1: P0 — OR IS NULL pattern with stored-proc variable filtered from probe WHERE ──
+
+#[test]
+fn test_or_is_null_pattern_filtered_from_probe_whole() {
+    let (_statements, suggestions) =
+        test_suggest("SELECT * FROM t WHERE t.a = '1' AND (p_x IS NULL OR t.b = p_x)");
+    assert!(
+        !suggestions.is_empty(),
+        "Rule should match param eq in OR pattern"
+    );
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+
+    // probe WHERE must NOT reference p_x (the stored-proc variable)
+    assert!(
+        !upper.contains("P_X"),
+        "Probe must NOT reference stored-proc variable p_x: {}",
+        probe
+    );
+    // probe WHERE must retain t.a = '1'
+    assert!(
+        upper.contains("T.A"),
+        "Probe must retain t.a = '1' literal: {}",
+        probe
+    );
+    // probe GROUP BY must include t.b
+    assert!(
+        upper.contains("GROUP BY") && upper.contains("T.B"),
+        "Probe must GROUP BY t.b: {}",
+        probe
+    );
+}
+
+// ── T2: P1 — No duplicate predicate from (col = expr OR expr IS NULL) ──
+
+#[test]
+fn test_or_eq_is_null_no_duplicate_predicate() {
+    // `v_c` is a stored-proc variable that makes the rule match.
+    // Before fix: the = inside the OR calls handle_equality → pushes bare
+    // t.b = decode(...) to non_eq, creating a duplicate predicate.
+    let (_statements, suggestions) = test_suggest(
+        "SELECT * FROM t WHERE t.a = '1' AND t.c = v_c AND (t.b = decode(t.a, '1', '0', t.b) OR decode(t.a, '1', '0', t.b) IS NULL)",
+    );
+    assert!(
+        !suggestions.is_empty(),
+        "Rule should match: param equality exists"
+    );
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+
+    // The OR expression must be present (the full expression is preserved)
+    assert!(
+        upper.contains("OR"),
+        "Probe must contain OR expression: {}",
+        probe
+    );
+
+    // t.a = '1' must appear exactly once (regression: before fix the bare
+    // t.b = decode(...) would also appear as a standalone predicate, which
+    // would add an extra AND after t.a = '1')
+    assert_eq!(
+        probe.match_indices("t.a = '1'").count(),
+        1,
+        "t.a = '1' should appear exactly once: {}",
+        probe
+    );
+
+    // The bare equality t.b = decode(...) must NOT appear standalone.
+    // Before fix, decode appeared 4 times (2 in bare eq + 2 in OR).
+    // After fix, decode appears 2 times (both inside the preserved OR).
+    let decode_count = probe.match_indices("decode").count();
+    assert_eq!(
+        decode_count, 2,
+        "Expected exactly 2 decode calls (inside OR only), got {}: {}",
+        decode_count, probe
+    );
+
+    // Probe must reference the param-column in GROUP BY
+    assert!(
+        upper.contains("GROUP BY") && upper.contains("T.C"),
+        "Probe must GROUP BY t.c: {}",
+        probe
+    );
+}
+
+// ── T3: P2 — Correlated ref in EXISTS subquery probe → Medium confidence ──
+
+#[test]
+fn test_correlated_ref_in_exists_probe_downgrades_confidence() {
+    let (_statements, suggestions) = test_suggest(
+        "SELECT * FROM a WHERE EXISTS (SELECT 1 FROM b v WHERE v.code = a.code AND v.user = p_u)",
+    );
+    assert_eq!(
+        suggestions.len(),
+        1,
+        "Expected 1 probe from EXISTS subquery (main scope has no tier1)"
+    );
+
+    // NOTE: Suggestion.confidence is hardcoded High in engine; the actual
+    // confidence is in RewriteAction::Generate::confidence.
+    match &suggestions[0].action {
+        RewriteAction::Generate { confidence, .. } => assert_eq!(
+            *confidence,
+            Confidence::Medium,
+            "EXISTS subquery with correlated ref should have Medium confidence"
+        ),
+        _ => panic!("Expected Generate action"),
+    }
+
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    // Probe WHERE must preserve correlation predicate
+    assert!(
+        probe.contains("v.code = a.code"),
+        "Probe must preserve correlation predicate v.code = a.code: {}",
+        probe
+    );
+    // Probe must reference the parameter column
+    assert!(
+        probe.contains("v.user"),
+        "Probe must reference v.user: {}",
+        probe
+    );
+}
+
+// ── T4: P2 regression guard — Same-scope join keeps High confidence ──
+
+#[test]
+fn test_same_scope_join_keeps_high_confidence() {
+    let (_statements, suggestions) =
+        test_suggest("SELECT * FROM a, b WHERE a.id = b.id AND a.status = p_s");
+    assert!(
+        !suggestions.is_empty(),
+        "Rule should match: param equality exists"
+    );
+    match &suggestions[0].action {
+        RewriteAction::Generate { confidence, .. } => assert_eq!(
+            *confidence,
+            Confidence::High,
+            "Same-scope join with no subquery should have High confidence"
+        ),
+        _ => panic!("Expected Generate action"),
+    }
+
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    assert!(
+        probe.contains("a.status"),
+        "Probe must reference a.status: {}",
+        probe
+    );
+}
+
+// ── T5: P0 regression guard — Explicit :p param in OR still filtered ──
+
+#[test]
+fn test_explicit_parameter_in_or_pattern_still_filtered() {
+    // JDBC `?` parameter inside OR: the entire expression (? IS NULL OR t.b = ?)
+    // contains Expr::JdbcParam, so non_param_exprs() must filter it from probe WHERE.
+    let (_statements, suggestions) = test_suggest("SELECT * FROM t WHERE (? IS NULL OR t.b = ?)");
+    assert!(
+        !suggestions.is_empty(),
+        "Rule should match param eq in OR pattern"
+    );
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+
+    // Probe must NOT contain reference to ? parameter
+    assert!(
+        !probe.contains("?"),
+        "Probe must NOT reference ? parameter: {}",
+        probe
+    );
+    // GROUP BY must include t.b
+    assert!(
+        upper.contains("GROUP BY") && upper.contains("T.B"),
+        "Probe must GROUP BY t.b: {}",
+        probe
+    );
+}
+
+#[test]
+fn test_param_only_in_like_filtered_via_pre_scan() {
+    // Origin: case6-2.sql — p_i_qry_bank_name only appears in a LIKE predicate,
+    // never in an equality. The pre-scan must still recognize it as a parameter
+    // and filter the LIKE OR from the probe WHERE.
+    let (_statements, suggestions) = test_suggest(
+        "SELECT t.a FROM dat_t t \
+         WHERE t.active = 'Y' AND t.status = p_status \
+         AND (p_filter IS NULL OR t.name LIKE '%' || p_filter || '%')",
+    );
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+
+    assert!(
+        upper.contains("GROUP BY") && upper.contains("T.STATUS"),
+        "Probe must GROUP BY t.status (from equality).\nProbe: {}",
+        probe
+    );
+    assert!(
+        upper.contains("T.NAME"),
+        "Probe must GROUP BY t.name — LIKE subject column should be extracted.\nProbe: {}",
+        probe
+    );
+    assert!(
+        !upper.contains("P_FILTER"),
+        "p_filter must not appear anywhere in probe — pre-scan should classify it.\nProbe: {}",
+        probe
+    );
+    assert!(
+        !upper.contains("LIKE"),
+        "LIKE predicate with stored-proc variable must be filtered from probe WHERE.\nProbe: {}",
+        probe
+    );
+    assert!(
+        upper.contains("ACTIVE"),
+        "Non-param literal condition t.active = 'Y' must be preserved.\nProbe: {}",
+        probe
     );
 }
