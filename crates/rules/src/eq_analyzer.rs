@@ -169,9 +169,43 @@ impl EqPredicateCollector {
             (Expr::ColumnRef(_), _) | (_, Expr::ColumnRef(_)) => {
                 self.non_eq.push(make_binary_eq(left, right));
             }
-            // Neither is ColumnRef → ignore
-            _ => {}
+            // Neither side is a bare ColumnRef — e.g. function-wrapped columns
+            // like `substr(t.code, 1, 17) = substr(v_param, 1, 17)`. Recursively
+            // classify columns/params the same way handle_between does, then
+            // push to non_eq so non_param_exprs() can filter it if needed.
+            _ => self.handle_expr_equality(left, right),
         }
+    }
+
+    /// Classify an equality where neither side is a bare `ColumnRef`.
+    ///
+    /// Walks both sides with `classify_expr_columns` to find table columns and
+    /// parameters. If parameters are present, table columns are pushed to tier1
+    /// and parameter names are registered. The full expression is always pushed
+    /// to `non_eq` so `non_param_exprs()` can filter it when it references a
+    /// classified parameter.
+    fn handle_expr_equality(&mut self, left: &Expr, right: &Expr) {
+        let (params, cols) = {
+            let mut params = Vec::new();
+            let mut cols = Vec::new();
+            classify_expr_columns(left, self, &mut params, &mut cols);
+            classify_expr_columns(right, self, &mut params, &mut cols);
+            (params, cols)
+        };
+
+        let has_param = !params.is_empty()
+            || contains_param(left)
+            || contains_param(right);
+
+        if has_param {
+            for name in params {
+                self.param_names.insert(name);
+            }
+            for col in cols {
+                self.tier1.push(col);
+            }
+        }
+        self.non_eq.push(make_binary_eq(left, right));
     }
 
     /// Tier1-only classifier used by [`extract_eq_from_non_and`].
@@ -793,6 +827,7 @@ pub(crate) fn walk_column_refs(expr: &Expr, f: &dyn Fn(&[Ident]) -> bool) -> boo
                     .as_ref()
                     .is_some_and(|filt| walk_column_refs(filt, f))
         }
+        Expr::SpecialFunction { args, .. } => args.iter().any(|a| walk_column_refs(a, f)),
         Expr::Case {
             operand,
             whens,
@@ -859,6 +894,11 @@ fn classify_expr_columns(
             }
             if let Some(f) = filter {
                 classify_expr_columns(f, collector, params, cols);
+            }
+        }
+        Expr::SpecialFunction { args, .. } => {
+            for a in args {
+                classify_expr_columns(a, collector, params, cols);
             }
         }
         Expr::Between {
@@ -972,6 +1012,7 @@ pub(crate) fn contains_param(expr: &Expr) -> bool {
         Expr::FunctionCall { args, filter, .. } => {
             args.iter().any(contains_param) || filter.as_ref().is_some_and(|f| contains_param(f))
         }
+        Expr::SpecialFunction { args, .. } => args.iter().any(contains_param),
         Expr::Case {
             operand,
             whens,
