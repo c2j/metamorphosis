@@ -18,7 +18,7 @@ env:
 
 jobs:
   build-linux-x86_64:
-    name: Build linux-x86_64 (glibc ≥ 2.31)
+    name: Build linux-x86_64 (glibc ≥ 2.17)
     runs-on: ubuntu-22.04
 
     steps:
@@ -53,14 +53,14 @@ jobs:
         run: |
           mkdir -p .zig-wrappers
           echo '#!/bin/sh' > .zig-wrappers/cc
-          echo 'exec zig cc --target=x86_64-linux-gnu.2.31 "$@"' >> .zig-wrappers/cc
+          echo 'exec zig cc --target=x86_64-linux-gnu.2.17 "$@"' >> .zig-wrappers/cc
           echo '#!/bin/sh' > .zig-wrappers/c++
-          echo 'exec zig c++ --target=x86_64-linux-gnu.2.31 "$@"' >> .zig-wrappers/c++
+          echo 'exec zig c++ --target=x86_64-linux-gnu.2.17 "$@"' >> .zig-wrappers/c++
           chmod +x .zig-wrappers/cc .zig-wrappers/c++
           export PATH="$(pwd)/.zig-wrappers:$PATH"
           export CC="$(pwd)/.zig-wrappers/cc"
           export CXX="$(pwd)/.zig-wrappers/c++"
-          cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31
+          cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.17
 
       - name: Strip
         run: strip --strip-unneeded target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
@@ -77,7 +77,7 @@ jobs:
           path: ${{ env.BINARY_NAME }}-${{ steps.version.outputs.version }}-linux-x86_64.zip
 
   build-linux-arm64:
-    name: Build linux-arm64 (glibc ≥ 2.31)
+    name: Build linux-arm64 (glibc ≥ 2.17)
     runs-on: ubuntu-24.04-arm
 
     steps:
@@ -112,13 +112,13 @@ jobs:
         run: |
           mkdir -p .zig-wrappers
           echo '#!/bin/sh' > .zig-wrappers/cc
-          echo 'exec zig cc --target=aarch64-linux-gnu.2.31 "$@"' >> .zig-wrappers/cc
+          echo 'exec zig cc --target=aarch64-linux-gnu.2.17 "$@"' >> .zig-wrappers/cc
           echo '#!/bin/sh' > .zig-wrappers/c++
-          echo 'exec zig c++ --target=aarch64-linux-gnu.2.31 "$@"' >> .zig-wrappers/c++
+          echo 'exec zig c++ --target=aarch64-linux-gnu.2.17 "$@"' >> .zig-wrappers/c++
           chmod +x .zig-wrappers/cc .zig-wrappers/c++
           export CC="$(pwd)/.zig-wrappers/cc"
           export CXX="$(pwd)/.zig-wrappers/c++"
-          cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.31
+          cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.17
 
       - name: Strip
         run: strip --strip-unneeded target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }}
