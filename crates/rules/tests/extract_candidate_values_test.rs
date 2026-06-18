@@ -1143,3 +1143,74 @@ fn test_param_only_in_like_filtered_via_pre_scan() {
         probe
     );
 }
+
+// ── T7: Function-wrapped equality — extract inner column, drop param predicate ──
+
+#[test]
+fn test_function_wrapped_equality_extracts_column_and_drops_predicate() {
+    // Regression: When both sides of an equality are function calls wrapping
+    // column references (e.g., `substr(v.class_value, 1, 17) = substr(v_security_id, 1, 17)`),
+    // handle_equality's catch-all `_ => {}` arm silently dropped the entire
+    // predicate. This caused TWO bugs:
+    //
+    //   Bug 1: v.class_value (the table column inside the function) was NOT
+    //          extracted to tier1 — missing from GROUP BY entirely.
+    //   Bug 2: The entire predicate disappeared from the probe WHERE clause,
+    //          making the probe return more rows than the real query matches
+    //          (the substr filter was gone).
+    //
+    // Origin: case5.sql line 23:
+    //   AND substr(v.class_value, 1, 17) = substr(v_security_id, 1, 17)
+    //
+    // Expected after fix:
+    //   - The table column inside the function (t.code) goes to tier1 → GROUP BY
+    //   - The predicate is removed from probe WHERE (references parameter v_param)
+    //   - v_param does not appear anywhere in the probe
+    let (_statements, suggestions) = test_suggest(
+        "SELECT * FROM t \
+         WHERE t.active = 'Y' \
+           AND t.status = v_status \
+           AND substr(t.code, 1, 17) = substr(v_param, 1, 17)",
+    );
+    assert!(
+        !suggestions.is_empty(),
+        "Rule should match: parameterized equalities exist"
+    );
+
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let upper = probe.to_uppercase();
+    let gby = upper.find("GROUP BY").expect("Probe must have GROUP BY");
+    let (before, after) = (&upper[..gby], &upper[gby..]);
+
+    // Bug 1 fix: t.code must appear in GROUP BY
+    assert!(
+        after.contains("CODE"),
+        "GROUP BY must include t.code — the column inside substr() is a tier1 candidate.\nProbe: {}",
+        probe
+    );
+    assert!(
+        after.contains("STATUS"),
+        "GROUP BY must include t.status (from bare param equality).\nProbe: {}",
+        probe
+    );
+
+    // Bug 2 fix: the substr() = substr() predicate must NOT appear in probe
+    assert!(
+        !upper.contains("SUBSTR"),
+        "substr(...) = substr(v_param, ...) must not appear in probe — \
+         column should be bare in GROUP BY, predicate removed (param reference).\nProbe: {}",
+        probe
+    );
+    assert!(
+        !upper.contains("V_PARAM"),
+        "Parameter v_param must not appear anywhere in probe.\nProbe: {}",
+        probe
+    );
+
+    // Non-param literal condition must still be preserved
+    assert!(
+        before.contains("ACTIVE"),
+        "Non-param condition t.active = 'Y' must be preserved.\nProbe: {}",
+        probe
+    );
+}
