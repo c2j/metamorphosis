@@ -89,7 +89,7 @@ impl RewriteRule for EliminateSelectStar {
                 SelectTarget::Star(prefix) => {
                     for col_name in columns.keys() {
                         let column_ref = if let Some(p) = prefix {
-                            Expr::ColumnRef(vec![p.clone().into(), col_name.clone().into()])
+                            Expr::ColumnRef(vec![p.clone(), col_name.clone().into()])
                         } else {
                             Expr::ColumnRef(vec![col_name.clone().into()])
                         };
