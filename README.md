@@ -17,7 +17,7 @@
 ```
 Layer 4: CLI / MCP Server
 Layer 3: RuleRegistry → RewriteEngine → SuggestionEngine
-Layer 2: Rules (4 built-in) / QED Verifier / VeriEQL Verifier
+Layer 2: Rules (14 built-in) / QED Verifier / VeriEQL Verifier
 Layer 1: ogsql-parser (AST / Visitor / SchemaMap / Formatter)
 ```
 
@@ -27,7 +27,7 @@ Layer 1: ogsql-parser (AST / Visitor / SchemaMap / Formatter)
 metamorphosis/
 ├── crates/
 │   ├── core/          # 引擎与抽象层（类型、Trait、上下文、注册表）
-│   ├── rules/         # 4 个内置重写规则
+│   ├── rules/         # 14 个内置重写规则
 │   ├── cli/           # 命令行入口（5 个子命令）
 │   ├── qed/           # QED 离线验证（嵌入式 Z3 SMT 求解器）
 │   ├── verieql/       # 有界等价性验证（OOPSLA 2024 算法移植，零 metamorphosis 依赖）
@@ -36,7 +36,7 @@ metamorphosis/
 ```
 
 - `crates/core/`：引擎与抽象层，定义 `RewriteRule` trait、`RewriteEngine`、`RuleRegistry`、`RewriteContext` 等核心类型。
-- `crates/rules/`：4 个内置规则，覆盖语义改写、性能优化与数据质量探针。
+- `crates/rules/`：14 个内置规则，覆盖语义改写、性能优化、安全告警与数据质量探针。
 - `crates/cli/`：命令行二进制 `metamorphosis`，提供 5 个子命令。
 - `crates/qed/`：QED 离线验证器，将 SQL 查询翻译为 SMT 公式，通过嵌入式 Z3 证明语义等价性。
 - `crates/verieql/`：VeriEQL 有界等价性验证器，移植自 OOPSLA 2024 论文算法，不依赖 metamorphosis 其他 crate。
@@ -86,6 +86,16 @@ Schema JSON 格式为 `表名 → 列名 → 类型`：
 | `detect-duplicate-eq-keys` | DataQuality | Manual | WHERE 等值条件 → GROUP BY 唯一性探针 |
 | `subquery-to-join` | Performance | Conditional | WHERE 子查询（EXISTS/IN/NOT EXISTS/NOT IN）→ JOIN |
 | `extract-candidate-values` | DataQuality | Manual | 参数化等值列 → 候选值探针 SQL |
+| `union-to-union-all` | Performance | Safe | `UNION` → `UNION ALL`（消除隐式去重） |
+| `between-to-eq` | Semantic | Safe | `col BETWEEN v AND v` → `col = v` |
+| `nvl-to-case` | Semantic | Safe | `NVL(a, b)` → `CASE WHEN a IS NULL THEN b ELSE a END` |
+| `delete-to-truncate` | Performance | Conditional | 无 WHERE 的 `DELETE` → `TRUNCATE` |
+| `or-to-union-all` | Performance | Conditional | 顶层 `WHERE OR` → 拆分为 `UNION ALL` |
+| `reject-no-where-dml` | Safety | Manual | 无 WHERE 的 `UPDATE/DELETE` → 告警 |
+| `probe-param-range` | DataQuality | Manual | 参数化等值列 → MIN/MAX/COUNT(DISTINCT) 探针 |
+| `probe-null-ratio` | DataQuality | Manual | WHERE/JOIN 条件列 → NULL 比例探针 |
+| `probe-data-skew` | DataQuality | Manual | GROUP BY 列 → 值分布倾斜探针 |
+| `probe-join-integrity` | DataQuality | Manual | 多表 JOIN → 引用完整性探针 |
 
 ### 安全级别
 
@@ -148,14 +158,14 @@ cargo test --workspace
 ```
 Layer 4: CLI / MCP Server
 Layer 3: RuleRegistry → RewriteEngine → SuggestionEngine
-Layer 2: Rules (4 built-in) / QED Verifier / VeriEQL Verifier
+Layer 2: Rules (14 built-in) / QED Verifier / VeriEQL Verifier
 Layer 1: ogsql-parser (AST / Visitor / SchemaMap / Formatter)
 ```
 
 The workspace contains six crates:
 
 - `crates/core/` — engine abstractions and types
-- `crates/rules/` — 4 built-in rewrite rules
+- `crates/rules/` — 14 built-in rewrite rules
 - `crates/cli/` — CLI binary with 5 subcommands
 - `crates/qed/` — offline equivalence prover with embedded Z3
 - `crates/verieql/` — bounded equivalence checker ported from OOPSLA 2024
@@ -191,6 +201,16 @@ Schema JSON format: `{"table": {"column": "type"}}`.
 | `detect-duplicate-eq-keys` | DataQuality | Manual | Equality conditions → GROUP BY uniqueness probe |
 | `subquery-to-join` | Performance | Conditional | Subqueries (EXISTS/IN/NOT EXISTS/NOT IN) → JOIN |
 | `extract-candidate-values` | DataQuality | Manual | Parameterized equality columns → candidate value probe |
+| `union-to-union-all` | Performance | Safe | `UNION` → `UNION ALL` (skip implicit dedup) |
+| `between-to-eq` | Semantic | Safe | `col BETWEEN v AND v` → `col = v` |
+| `nvl-to-case` | Semantic | Safe | `NVL(a, b)` → `CASE WHEN a IS NULL THEN b ELSE a END` |
+| `delete-to-truncate` | Performance | Conditional | Full-table `DELETE` → `TRUNCATE` |
+| `or-to-union-all` | Performance | Conditional | Top-level `WHERE OR` → `UNION ALL` |
+| `reject-no-where-dml` | Safety | Manual | `UPDATE/DELETE` without WHERE → warning |
+| `probe-param-range` | DataQuality | Manual | Parameterized equality columns → MIN/MAX/COUNT probe |
+| `probe-null-ratio` | DataQuality | Manual | WHERE/JOIN condition columns → NULL ratio probe |
+| `probe-data-skew` | DataQuality | Manual | GROUP BY columns → value distribution probe |
+| `probe-join-integrity` | DataQuality | Manual | Multi-table JOIN → referential integrity probe |
 
 ### Build & Test
 
