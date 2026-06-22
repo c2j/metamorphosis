@@ -193,9 +193,7 @@ impl EqPredicateCollector {
             (params, cols)
         };
 
-        let has_param = !params.is_empty()
-            || contains_param(left)
-            || contains_param(right);
+        let has_param = !params.is_empty() || contains_param(left) || contains_param(right);
 
         if has_param {
             for name in params {
@@ -291,12 +289,7 @@ impl EqPredicateCollector {
     /// Classify a LIKE expression for tier1 extraction. Same principle as
     /// `handle_between`: if the LIKE is param-bearing, extract the subject
     /// column (and any other known-table columns in the pattern) to tier1.
-    fn handle_like(
-        &mut self,
-        subj: &Expr,
-        pattern: &Expr,
-        escape: &Option<Box<Expr>>,
-    ) {
+    fn handle_like(&mut self, subj: &Expr, pattern: &Expr, escape: &Option<Box<Expr>>) {
         let (params, cols) = {
             let mut params = Vec::new();
             let mut cols = Vec::new();
@@ -974,24 +967,22 @@ fn collect_literal_compared_cols(expr: &Expr) -> HashSet<String> {
     let mut cols = HashSet::new();
     fn walk(expr: &Expr, cols: &mut HashSet<String>) {
         match expr {
-            Expr::BinaryOp { left, op, right } => {
-                match op.to_uppercase().as_str() {
-                    "=" => match (left.as_ref(), right.as_ref()) {
-                        (Expr::ColumnRef(name), Expr::Literal(_))
-                        | (Expr::Literal(_), Expr::ColumnRef(name)) => {
-                            if let Some(n) = name.last() {
-                                cols.insert(n.as_str().to_lowercase());
-                            }
+            Expr::BinaryOp { left, op, right } => match op.to_uppercase().as_str() {
+                "=" => match (left.as_ref(), right.as_ref()) {
+                    (Expr::ColumnRef(name), Expr::Literal(_))
+                    | (Expr::Literal(_), Expr::ColumnRef(name)) => {
+                        if let Some(n) = name.last() {
+                            cols.insert(n.as_str().to_lowercase());
                         }
-                        _ => {}
-                    },
-                    "AND" | "OR" => {
-                        walk(left, cols);
-                        walk(right, cols);
                     }
                     _ => {}
+                },
+                "AND" | "OR" => {
+                    walk(left, cols);
+                    walk(right, cols);
                 }
-            }
+                _ => {}
+            },
             Expr::Parenthesized(inner) => walk(inner, cols),
             _ => {}
         }
