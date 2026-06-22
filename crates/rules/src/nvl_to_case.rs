@@ -164,23 +164,19 @@ fn replace_first_nvl(expr: &Expr) -> Option<Expr> {
     }
 
     match expr {
-        Expr::BinaryOp { left, op, right } => {
-            if let Some(new_left) = replace_first_nvl(left) {
-                Some(Expr::BinaryOp {
-                    left: Box::new(new_left),
-                    op: op.clone(),
-                    right: right.clone(),
-                })
-            } else if let Some(new_right) = replace_first_nvl(right) {
-                Some(Expr::BinaryOp {
+        Expr::BinaryOp { left, op, right } => replace_first_nvl(left)
+            .map(|new_left| Expr::BinaryOp {
+                left: Box::new(new_left),
+                op: op.clone(),
+                right: right.clone(),
+            })
+            .or_else(|| {
+                replace_first_nvl(right).map(|new_right| Expr::BinaryOp {
                     left: left.clone(),
                     op: op.clone(),
                     right: Box::new(new_right),
                 })
-            } else {
-                None
-            }
-        }
+            }),
         Expr::UnaryOp { op, expr: inner } => replace_first_nvl(inner).map(|r| Expr::UnaryOp {
             op: op.clone(),
             expr: Box::new(r),

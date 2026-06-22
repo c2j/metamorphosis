@@ -144,23 +144,19 @@ fn replace_first_degenerate_between(expr: &Expr) -> Option<Expr> {
             right: low.clone(),
         }),
         Expr::Between { .. } => None,
-        Expr::BinaryOp { left, right, op } => {
-            if let Some(replaced) = replace_first_degenerate_between(left) {
-                Some(Expr::BinaryOp {
-                    left: Box::new(replaced),
-                    op: op.clone(),
-                    right: right.clone(),
-                })
-            } else if let Some(replaced) = replace_first_degenerate_between(right) {
-                Some(Expr::BinaryOp {
+        Expr::BinaryOp { left, right, op } => replace_first_degenerate_between(left)
+            .map(|replaced| Expr::BinaryOp {
+                left: Box::new(replaced),
+                op: op.clone(),
+                right: right.clone(),
+            })
+            .or_else(|| {
+                replace_first_degenerate_between(right).map(|replaced| Expr::BinaryOp {
                     left: left.clone(),
                     op: op.clone(),
                     right: Box::new(replaced),
                 })
-            } else {
-                None
-            }
-        }
+            }),
         Expr::UnaryOp {
             op: unary_op,
             expr: inner,
