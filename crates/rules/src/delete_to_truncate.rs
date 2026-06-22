@@ -96,6 +96,14 @@ impl RewriteRule for DeleteToTruncate {
             };
         }
 
+        // (8) No WITH (CTE).
+        if delete.with.is_some() {
+            return MatchResult::NotMatched {
+                reason: "DELETE has a WITH (CTE) clause".to_string(),
+            };
+        }
+
+        debug!("DELETE without WHERE detected, eligible for TRUNCATE");
         MatchResult::Matched
     }
 
@@ -105,12 +113,24 @@ impl RewriteRule for DeleteToTruncate {
             _ => return vec![],
         };
 
+        // Re-check all match conditions (engine may call apply without matches).
+        if delete.where_clause.is_some()
+            || !delete.using.is_empty()
+            || delete.order_by.is_some()
+            || delete.limit.is_some()
+            || !delete.returning.is_empty()
+            || delete.tables.len() != 1
+            || delete.with.is_some()
+        {
+            return vec![];
+        }
+
         let table_name = match delete.tables.first() {
             Some(TableRef::Table { name, .. }) => name.clone(),
             _ => return vec![],
         };
 
-        debug!(table = ?table_name, "Converting DELETE to TRUNCATE");
+        debug!("Converting DELETE to TRUNCATE");
 
         let truncate = TruncateStatement {
             tables: vec![table_name],

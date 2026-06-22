@@ -12,12 +12,12 @@ pub mod between_to_eq;
 pub mod delete_to_truncate;
 pub mod nvl_to_case;
 pub mod or_to_union_all;
-pub mod reject_no_where_dml;
-pub mod union_to_union_all;
 pub mod probe_data_skew;
 pub mod probe_join_integrity;
 pub mod probe_null_ratio;
 pub mod probe_param_range;
+pub mod reject_no_where_dml;
+pub mod union_to_union_all;
 
 use metamorphosis_core::RewriteRule;
 

@@ -72,10 +72,7 @@ fn test_intersect_not_affected() {
         "INTERSECT should not mention UNION, got: {}",
         sql
     );
-    assert!(
-        suggestions.is_empty(),
-        "No suggestions for INTERSECT"
-    );
+    assert!(suggestions.is_empty(), "No suggestions for INTERSECT");
 }
 
 #[test]
@@ -94,10 +91,7 @@ fn test_except_not_affected() {
         "EXCEPT should not mention UNION, got: {}",
         sql
     );
-    assert!(
-        suggestions.is_empty(),
-        "No suggestions for EXCEPT"
-    );
+    assert!(suggestions.is_empty(), "No suggestions for EXCEPT");
 }
 
 #[test]

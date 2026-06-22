@@ -479,9 +479,7 @@ fn table_ref_alias(tr: &TableRef) -> Option<String> {
         ),
         TableRef::Subquery { alias, .. }
         | TableRef::Values { alias, .. }
-        | TableRef::FunctionCall { alias, .. } => {
-            alias.as_ref().map(|a| a.as_str().to_string())
-        }
+        | TableRef::FunctionCall { alias, .. } => alias.as_ref().map(|a| a.as_str().to_string()),
         _ => None,
     }
 }

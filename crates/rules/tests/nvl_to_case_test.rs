@@ -28,7 +28,11 @@ fn test_nvl_in_target_replaced() {
     assert!(upper.contains("CASE"), "Expected CASE, got: {}", sql);
     assert!(upper.contains("IS NULL"), "Expected IS NULL, got: {}", sql);
     assert!(upper.contains("ELSE"), "Expected ELSE, got: {}", sql);
-    assert!(!upper.contains("NVL"), "Should not contain NVL, got: {}", sql);
+    assert!(
+        !upper.contains("NVL"),
+        "Should not contain NVL, got: {}",
+        sql
+    );
 }
 
 #[test]
@@ -36,8 +40,16 @@ fn test_nvl_in_where_replaced() {
     let (statements, _) = test_rewrite("SELECT * FROM t WHERE NVL(status, 'X') = 'Y'");
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(upper.contains("CASE"), "Expected CASE in WHERE, got: {}", sql);
-    assert!(!upper.contains("NVL"), "Should not contain NVL, got: {}", sql);
+    assert!(
+        upper.contains("CASE"),
+        "Expected CASE in WHERE, got: {}",
+        sql
+    );
+    assert!(
+        !upper.contains("NVL"),
+        "Should not contain NVL, got: {}",
+        sql
+    );
 }
 
 #[test]
@@ -45,7 +57,11 @@ fn test_lowercase_nvl_matched() {
     let (statements, _) = test_rewrite("SELECT nvl(col, 0) FROM t");
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(upper.contains("CASE"), "Lowercase nvl should be matched: {}", sql);
+    assert!(
+        upper.contains("CASE"),
+        "Lowercase nvl should be matched: {}",
+        sql
+    );
 }
 
 #[test]
@@ -53,7 +69,11 @@ fn test_no_nvl_no_match() {
     let (statements, _) = test_rewrite("SELECT MAX(col) FROM t");
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(!upper.contains("CASE"), "Should not add CASE without NVL: {}", sql);
+    assert!(
+        !upper.contains("CASE"),
+        "Should not add CASE without NVL: {}",
+        sql
+    );
 }
 
 #[test]
@@ -61,6 +81,10 @@ fn test_nested_nvl_replaced() {
     let (statements, _) = test_rewrite("SELECT col1, NVL(col2, 'default') FROM t");
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(upper.contains("CASE"), "Expected CASE for nested NVL: {}", sql);
+    assert!(
+        upper.contains("CASE"),
+        "Expected CASE for nested NVL: {}",
+        sql
+    );
     assert!(!upper.contains("NVL"), "Should not contain NVL: {}", sql);
 }

@@ -191,7 +191,9 @@ fn extract_columns(expr: &Expr, cols: &mut Vec<ObjectName>) {
             extract_columns(low, cols);
             extract_columns(high, cols);
         }
-        Expr::InList { expr: inner, list, .. } => {
+        Expr::InList {
+            expr: inner, list, ..
+        } => {
             extract_columns(inner, cols);
             for item in list {
                 extract_columns(item, cols);
@@ -296,10 +298,7 @@ fn build_null_ratio_probe(from: &[TableRef], columns: &[ObjectName]) -> Spanned<
     for col in columns {
         let alias: String = format!(
             "{}_non_null",
-            col.iter()
-                .map(|i| i.as_str())
-                .collect::<Vec<_>>()
-                .join("_")
+            col.iter().map(|i| i.as_str()).collect::<Vec<_>>().join("_")
         );
         targets.push(SelectTarget::Expr(
             Expr::FunctionCall {

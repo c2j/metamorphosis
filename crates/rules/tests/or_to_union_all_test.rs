@@ -25,7 +25,11 @@ fn test_top_level_or_becomes_union_all() {
     let (statements, _) = test_rewrite("SELECT * FROM t WHERE a = 1 OR b = 2");
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(upper.contains("UNION ALL"), "Expected UNION ALL, got: {}", sql);
+    assert!(
+        upper.contains("UNION ALL"),
+        "Expected UNION ALL, got: {}",
+        sql
+    );
 }
 
 #[test]
@@ -33,7 +37,11 @@ fn test_and_not_matched() {
     let (statements, _) = test_rewrite("SELECT * FROM t WHERE a = 1 AND b = 2");
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(!upper.contains("UNION ALL"), "AND should not produce UNION ALL: {}", sql);
+    assert!(
+        !upper.contains("UNION ALL"),
+        "AND should not produce UNION ALL: {}",
+        sql
+    );
 }
 
 #[test]
@@ -41,7 +49,11 @@ fn test_no_where_no_match() {
     let (statements, _) = test_rewrite("SELECT * FROM t WHERE a = 1");
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(!upper.contains("UNION ALL"), "Single condition should not match: {}", sql);
+    assert!(
+        !upper.contains("UNION ALL"),
+        "Single condition should not match: {}",
+        sql
+    );
 }
 
 #[test]
@@ -49,8 +61,16 @@ fn test_distinct_blocks_rewrite() {
     let (statements, _) = test_rewrite("SELECT DISTINCT * FROM t WHERE a = 1 OR b = 2");
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(!upper.contains("UNION ALL"), "DISTINCT should block rewrite: {}", sql);
-    assert!(upper.contains("DISTINCT"), "Should preserve DISTINCT: {}", sql);
+    assert!(
+        !upper.contains("UNION ALL"),
+        "DISTINCT should block rewrite: {}",
+        sql
+    );
+    assert!(
+        upper.contains("DISTINCT"),
+        "Should preserve DISTINCT: {}",
+        sql
+    );
 }
 
 #[test]
@@ -59,5 +79,9 @@ fn test_join_blocks_rewrite() {
         test_rewrite("SELECT * FROM t1 JOIN t2 ON t1.id = t2.id WHERE t1.a = 1 OR t2.b = 2");
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(!upper.contains("UNION ALL"), "JOIN should block rewrite: {}", sql);
+    assert!(
+        !upper.contains("UNION ALL"),
+        "JOIN should block rewrite: {}",
+        sql
+    );
 }

@@ -23,16 +23,29 @@ fn test_rewrite(sql: &str) -> (Vec<Statement>, Vec<Suggestion>) {
 
 #[test]
 fn test_single_group_by_generates_probe() {
-    let (_statements, suggestions) = test_rewrite("SELECT dept, COUNT(*) FROM employees GROUP BY dept");
+    let (_statements, suggestions) =
+        test_rewrite("SELECT dept, COUNT(*) FROM employees GROUP BY dept");
     assert_eq!(suggestions.len(), 1);
 
     match &suggestions[0].action {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
             let upper = probe.to_uppercase();
-            assert!(upper.contains("GROUP BY"), "Probe should have GROUP BY: {}", probe);
-            assert!(upper.contains("ORDER BY"), "Probe should have ORDER BY: {}", probe);
-            assert!(upper.contains("CNT"), "Probe should have CNT alias: {}", probe);
+            assert!(
+                upper.contains("GROUP BY"),
+                "Probe should have GROUP BY: {}",
+                probe
+            );
+            assert!(
+                upper.contains("ORDER BY"),
+                "Probe should have ORDER BY: {}",
+                probe
+            );
+            assert!(
+                upper.contains("CNT"),
+                "Probe should have CNT alias: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }
@@ -47,8 +60,16 @@ fn test_multiple_group_by_columns() {
     match &suggestions[0].action {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
-            assert!(probe.contains("dept"), "Probe should reference dept: {}", probe);
-            assert!(probe.contains("role"), "Probe should reference role: {}", probe);
+            assert!(
+                probe.contains("dept"),
+                "Probe should reference dept: {}",
+                probe
+            );
+            assert!(
+                probe.contains("role"),
+                "Probe should reference role: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }

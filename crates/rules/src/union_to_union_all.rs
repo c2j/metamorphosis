@@ -35,8 +35,7 @@ impl RewriteRule for UnionToUnionAll {
             Statement::Select(spanned) => match &spanned.node.set_operation {
                 Some(SetOperation::Union { all: false, .. }) => MatchResult::Matched,
                 Some(SetOperation::Union { all: true, .. }) => MatchResult::NotMatched {
-                    reason: "UNION ALL — already uses UNION ALL, no conversion needed"
-                        .to_string(),
+                    reason: "UNION ALL — already uses UNION ALL, no conversion needed".to_string(),
                 },
                 Some(SetOperation::Intersect { .. }) => MatchResult::NotMatched {
                     reason: "INTERSECT — not a UNION operation".to_string(),
@@ -66,10 +65,7 @@ impl RewriteRule for UnionToUnionAll {
             Some(SetOperation::Union { all: false, .. }) => {
                 debug!("Converting UNION to UNION ALL");
                 if let Some(SetOperation::Union { right, .. }) = new_select.set_operation.take() {
-                    new_select.set_operation = Some(SetOperation::Union {
-                        all: true,
-                        right,
-                    });
+                    new_select.set_operation = Some(SetOperation::Union { all: true, right });
                 }
             }
             _ => return vec![],

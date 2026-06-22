@@ -168,10 +168,8 @@ fn replace_first_degenerate_between(expr: &Expr) -> Option<Expr> {
             op: unary_op.clone(),
             expr: Box::new(replaced),
         }),
-        Expr::Parenthesized(inner) => {
-            replace_first_degenerate_between(inner)
-                .map(|replaced| Expr::Parenthesized(Box::new(replaced)))
-        }
+        Expr::Parenthesized(inner) => replace_first_degenerate_between(inner)
+            .map(|replaced| Expr::Parenthesized(Box::new(replaced))),
         Expr::IsNull {
             expr: inner,
             negated,

@@ -92,12 +92,8 @@ impl RewriteRule for ProbeParamRange {
             }
 
             let non_param = collector.non_param_exprs();
-            let probe = build_range_probe(
-                &scope.from,
-                &collector.keep_exprs,
-                &non_param,
-                &unique_cols,
-            );
+            let probe =
+                build_range_probe(&scope.from, &collector.keep_exprs, &non_param, &unique_cols);
 
             debug!(
                 rule_id = self.id(),
@@ -136,14 +132,20 @@ fn build_range_probe(
 
     for col in columns {
         let col_ref = Expr::ColumnRef(col.clone());
-        let col_label: String = col
-            .iter()
-            .map(|i| i.as_str())
-            .collect::<Vec<_>>()
-            .join("_");
+        let col_label: String = col.iter().map(|i| i.as_str()).collect::<Vec<_>>().join("_");
 
-        targets.push(func_target("min", &col_ref, false, &format!("{col_label}_min")));
-        targets.push(func_target("max", &col_ref, false, &format!("{col_label}_max")));
+        targets.push(func_target(
+            "min",
+            &col_ref,
+            false,
+            &format!("{col_label}_min"),
+        ));
+        targets.push(func_target(
+            "max",
+            &col_ref,
+            false,
+            &format!("{col_label}_max"),
+        ));
         targets.push(func_target(
             "count",
             &col_ref,

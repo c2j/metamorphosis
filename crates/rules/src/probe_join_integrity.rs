@@ -85,7 +85,9 @@ impl RewriteRule for ProbeJoinIntegrity {
             let match_col = find_right_column(&join.condition, &join.right);
 
             let probe = match (right_alias.as_deref(), match_col.as_ref()) {
-                (_, Some(col)) => build_integrity_probe(&join.left, &join.right, &join.condition, col),
+                (_, Some(col)) => {
+                    build_integrity_probe(&join.left, &join.right, &join.condition, col)
+                }
                 _ => continue,
             };
 
@@ -96,10 +98,8 @@ impl RewriteRule for ProbeJoinIntegrity {
                 "Generated join integrity probe"
             );
 
-            let left_name = table_ref_label(&join.left)
-                .unwrap_or_else(|| "left".to_string());
-            let right_name = table_ref_label(&join.right)
-                .unwrap_or_else(|| "right".to_string());
+            let left_name = table_ref_label(&join.left).unwrap_or_else(|| "left".to_string());
+            let right_name = table_ref_label(&join.right).unwrap_or_else(|| "right".to_string());
 
             actions.push(RewriteAction::Generate {
                 stmt: Box::new(Statement::Select(probe)),
@@ -126,7 +126,13 @@ fn collect_joins(from: &[TableRef]) -> Vec<JoinInfo> {
 }
 
 fn collect_joins_recursive(tr: &TableRef, result: &mut Vec<JoinInfo>) {
-    if let TableRef::Join { left, right, condition, .. } = tr {
+    if let TableRef::Join {
+        left,
+        right,
+        condition,
+        ..
+    } = tr
+    {
         if let Some(cond) = condition {
             result.push(JoinInfo {
                 left: left.as_ref().clone(),
@@ -141,17 +147,13 @@ fn collect_joins_recursive(tr: &TableRef, result: &mut Vec<JoinInfo>) {
 
 fn table_ref_label(tr: &TableRef) -> Option<String> {
     match tr {
-        TableRef::Table { name, alias, .. } => {
-            alias
-                .as_ref()
-                .map(|a| a.as_str().to_string())
-                .or_else(|| name.last().map(|i| i.as_str().to_string()))
-        }
+        TableRef::Table { name, alias, .. } => alias
+            .as_ref()
+            .map(|a| a.as_str().to_string())
+            .or_else(|| name.last().map(|i| i.as_str().to_string())),
         TableRef::Subquery { alias, .. }
         | TableRef::Values { alias, .. }
-        | TableRef::FunctionCall { alias, .. } => {
-            alias.as_ref().map(|a| a.as_str().to_string())
-        }
+        | TableRef::FunctionCall { alias, .. } => alias.as_ref().map(|a| a.as_str().to_string()),
         _ => None,
     }
 }

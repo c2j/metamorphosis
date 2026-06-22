@@ -26,8 +26,16 @@ fn test_delete_without_where_becomes_truncate() {
 
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(upper.contains("TRUNCATE"), "Expected TRUNCATE, got: {}", sql);
-    assert!(upper.contains("USERS"), "Should reference users table: {}", sql);
+    assert!(
+        upper.contains("TRUNCATE"),
+        "Expected TRUNCATE, got: {}",
+        sql
+    );
+    assert!(
+        upper.contains("USERS"),
+        "Should reference users table: {}",
+        sql
+    );
 }
 
 #[test]
@@ -36,7 +44,11 @@ fn test_delete_with_where_no_change() {
 
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(!upper.contains("TRUNCATE"), "Should not TRUNCATE with WHERE: {}", sql);
+    assert!(
+        !upper.contains("TRUNCATE"),
+        "Should not TRUNCATE with WHERE: {}",
+        sql
+    );
     assert!(upper.contains("DELETE"), "Should remain DELETE: {}", sql);
 }
 
@@ -46,7 +58,25 @@ fn test_delete_with_returning_no_change() {
 
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(!upper.contains("TRUNCATE"), "Should not TRUNCATE with RETURNING: {}", sql);
+    assert!(
+        !upper.contains("TRUNCATE"),
+        "Should not TRUNCATE with RETURNING: {}",
+        sql
+    );
+}
+
+#[test]
+fn test_delete_with_limit_no_change() {
+    let (statements, _suggestions) = test_rewrite("DELETE FROM users LIMIT 10");
+
+    let sql = SqlFormatter::new().format_statement(&statements[0]);
+    let upper = sql.to_uppercase();
+    assert!(
+        !upper.contains("TRUNCATE"),
+        "Should not TRUNCATE with LIMIT: {}",
+        sql
+    );
+    assert!(upper.contains("DELETE"), "Should remain DELETE: {}", sql);
 }
 
 #[test]
@@ -55,5 +85,9 @@ fn test_select_no_match() {
 
     let sql = SqlFormatter::new().format_statement(&statements[0]);
     let upper = sql.to_uppercase();
-    assert!(!upper.contains("TRUNCATE"), "SELECT should not match: {}", sql);
+    assert!(
+        !upper.contains("TRUNCATE"),
+        "SELECT should not match: {}",
+        sql
+    );
 }

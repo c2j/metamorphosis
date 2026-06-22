@@ -129,7 +129,9 @@ fn find_nvl(expr: &Expr) -> bool {
             else_expr,
         } => {
             operand.as_ref().map(|o| find_nvl(o)).unwrap_or(false)
-                || whens.iter().any(|w| find_nvl(&w.condition) || find_nvl(&w.result))
+                || whens
+                    .iter()
+                    .any(|w| find_nvl(&w.condition) || find_nvl(&w.result))
                 || else_expr.as_ref().map(|e| find_nvl(e)).unwrap_or(false)
         }
         Expr::Between {
@@ -162,11 +164,7 @@ fn replace_first_nvl(expr: &Expr) -> Option<Expr> {
     }
 
     match expr {
-        Expr::BinaryOp {
-            left,
-            op,
-            right,
-        } => {
+        Expr::BinaryOp { left, op, right } => {
             if let Some(new_left) = replace_first_nvl(left) {
                 Some(Expr::BinaryOp {
                     left: Box::new(new_left),
@@ -183,21 +181,20 @@ fn replace_first_nvl(expr: &Expr) -> Option<Expr> {
                 None
             }
         }
-        Expr::UnaryOp { op, expr: inner } => {
-            replace_first_nvl(inner).map(|r| Expr::UnaryOp {
-                op: op.clone(),
-                expr: Box::new(r),
-            })
-        }
+        Expr::UnaryOp { op, expr: inner } => replace_first_nvl(inner).map(|r| Expr::UnaryOp {
+            op: op.clone(),
+            expr: Box::new(r),
+        }),
         Expr::Parenthesized(inner) => {
             replace_first_nvl(inner).map(|r| Expr::Parenthesized(Box::new(r)))
         }
-        Expr::IsNull { expr: inner, negated } => {
-            replace_first_nvl(inner).map(|r| Expr::IsNull {
-                expr: Box::new(r),
-                negated: *negated,
-            })
-        }
+        Expr::IsNull {
+            expr: inner,
+            negated,
+        } => replace_first_nvl(inner).map(|r| Expr::IsNull {
+            expr: Box::new(r),
+            negated: *negated,
+        }),
         Expr::FunctionCall {
             name,
             args,
@@ -317,7 +314,11 @@ fn replace_first_nvl(expr: &Expr) -> Option<Expr> {
                 })
             }
         }
-        Expr::InList { expr, list, negated } => {
+        Expr::InList {
+            expr,
+            list,
+            negated,
+        } => {
             if let Some(new_expr) = replace_first_nvl(expr) {
                 Some(Expr::InList {
                     expr: Box::new(new_expr),

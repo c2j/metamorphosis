@@ -23,18 +23,32 @@ fn test_rewrite(sql: &str) -> (Vec<Statement>, Vec<Suggestion>) {
 
 #[test]
 fn test_inner_join_generates_probe() {
-    let (_statements, suggestions) =
-        test_rewrite("SELECT * FROM a JOIN b ON a.id = b.aid");
+    let (_statements, suggestions) = test_rewrite("SELECT * FROM a JOIN b ON a.id = b.aid");
 
-    assert!(!suggestions.is_empty(), "Should generate probe for JOIN query");
+    assert!(
+        !suggestions.is_empty(),
+        "Should generate probe for JOIN query"
+    );
 
     match &suggestions[0].action {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
             let upper = probe.to_uppercase();
-            assert!(upper.contains("COUNT"), "Probe should have COUNT: {}", probe);
-            assert!(upper.contains("TOTAL"), "Probe should have TOTAL alias: {}", probe);
-            assert!(upper.contains("MATCHED"), "Probe should have MATCHED alias: {}", probe);
+            assert!(
+                upper.contains("COUNT"),
+                "Probe should have COUNT: {}",
+                probe
+            );
+            assert!(
+                upper.contains("TOTAL"),
+                "Probe should have TOTAL alias: {}",
+                probe
+            );
+            assert!(
+                upper.contains("MATCHED"),
+                "Probe should have MATCHED alias: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }
@@ -42,8 +56,7 @@ fn test_inner_join_generates_probe() {
 
 #[test]
 fn test_left_join_generates_probe() {
-    let (_statements, suggestions) =
-        test_rewrite("SELECT * FROM a LEFT JOIN b ON a.id = b.aid");
+    let (_statements, suggestions) = test_rewrite("SELECT * FROM a LEFT JOIN b ON a.id = b.aid");
 
     assert!(!suggestions.is_empty(), "Should match LEFT JOIN");
 }
@@ -52,14 +65,16 @@ fn test_left_join_generates_probe() {
 fn test_no_join_no_match() {
     let (_statements, suggestions) = test_rewrite("SELECT * FROM a");
 
-    assert!(suggestions.is_empty(), "Should not match single-table query");
+    assert!(
+        suggestions.is_empty(),
+        "Should not match single-table query"
+    );
 }
 
 #[test]
 fn test_multiple_joins_multiple_probes() {
-    let (_statements, suggestions) = test_rewrite(
-        "SELECT * FROM a JOIN b ON a.id = b.aid JOIN c ON b.id = c.bid",
-    );
+    let (_statements, suggestions) =
+        test_rewrite("SELECT * FROM a JOIN b ON a.id = b.aid JOIN c ON b.id = c.bid");
 
     assert!(
         suggestions.len() >= 2,

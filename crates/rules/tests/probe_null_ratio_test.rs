@@ -24,8 +24,7 @@ fn test_rewrite(sql: &str) -> (Vec<Statement>, Vec<Suggestion>) {
 /// Two columns in WHERE → 1 suggestion with COUNT(*), COUNT(col1), COUNT(col2)
 #[test]
 fn test_where_columns_generate_null_probe() {
-    let (_statements, suggestions) =
-        test_rewrite("SELECT * FROM t WHERE col1 = 1 AND col2 = 2");
+    let (_statements, suggestions) = test_rewrite("SELECT * FROM t WHERE col1 = 1 AND col2 = 2");
 
     assert_eq!(suggestions.len(), 1);
 
@@ -33,12 +32,36 @@ fn test_where_columns_generate_null_probe() {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
             let upper = probe.to_uppercase();
-            assert!(upper.contains("COUNT"), "Probe should have COUNT: {}", probe);
-            assert!(upper.contains("TOTAL"), "Probe should have TOTAL alias: {}", probe);
-            assert!(probe.contains("col1"), "Probe should reference col1: {}", probe);
-            assert!(probe.contains("col2"), "Probe should reference col2: {}", probe);
-            assert!(probe.contains("col1_non_null"), "Probe should have col1_non_null alias: {}", probe);
-            assert!(probe.contains("col2_non_null"), "Probe should have col2_non_null alias: {}", probe);
+            assert!(
+                upper.contains("COUNT"),
+                "Probe should have COUNT: {}",
+                probe
+            );
+            assert!(
+                upper.contains("TOTAL"),
+                "Probe should have TOTAL alias: {}",
+                probe
+            );
+            assert!(
+                probe.contains("col1"),
+                "Probe should reference col1: {}",
+                probe
+            );
+            assert!(
+                probe.contains("col2"),
+                "Probe should reference col2: {}",
+                probe
+            );
+            assert!(
+                probe.contains("col1_non_null"),
+                "Probe should have col1_non_null alias: {}",
+                probe
+            );
+            assert!(
+                probe.contains("col2_non_null"),
+                "Probe should have col2_non_null alias: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }
@@ -55,9 +78,21 @@ fn test_single_column_where() {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
             let upper = probe.to_uppercase();
-            assert!(upper.contains("TOTAL"), "Probe should have TOTAL: {}", probe);
-            assert!(probe.contains("status"), "Probe should reference status: {}", probe);
-            assert!(probe.contains("status_non_null"), "Probe should have status_non_null alias: {}", probe);
+            assert!(
+                upper.contains("TOTAL"),
+                "Probe should have TOTAL: {}",
+                probe
+            );
+            assert!(
+                probe.contains("status"),
+                "Probe should reference status: {}",
+                probe
+            );
+            assert!(
+                probe.contains("status_non_null"),
+                "Probe should have status_non_null alias: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }
@@ -74,7 +109,10 @@ fn test_no_where_no_match() {
 #[test]
 fn test_non_select_no_match() {
     let (_statements, suggestions) = test_rewrite("DELETE FROM t WHERE x = 1");
-    assert!(suggestions.is_empty(), "DELETE should not match, SELECT only");
+    assert!(
+        suggestions.is_empty(),
+        "DELETE should not match, SELECT only"
+    );
 }
 
 /// Qualified column references (table.column)
@@ -82,13 +120,25 @@ fn test_non_select_no_match() {
 fn test_qualified_columns() {
     let (_statements, suggestions) =
         test_rewrite("SELECT * FROM orders o WHERE o.status = 'active' AND o.amount > 100");
-    assert_eq!(suggestions.len(), 1, "Expected suggestion for qualified columns");
+    assert_eq!(
+        suggestions.len(),
+        1,
+        "Expected suggestion for qualified columns"
+    );
 
     match &suggestions[0].action {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
-            assert!(probe.contains("o.status"), "Probe should reference o.status: {}", probe);
-            assert!(probe.contains("o.amount"), "Probe should reference o.amount: {}", probe);
+            assert!(
+                probe.contains("o.status"),
+                "Probe should reference o.status: {}",
+                probe
+            );
+            assert!(
+                probe.contains("o.amount"),
+                "Probe should reference o.amount: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }
@@ -122,12 +172,20 @@ fn test_duplicate_columns_deduplicated() {
 fn test_between_columns() {
     let (_statements, suggestions) =
         test_rewrite("SELECT * FROM t WHERE t.date_col BETWEEN '2020-01-01' AND '2020-12-31'");
-    assert_eq!(suggestions.len(), 1, "Expected suggestion for BETWEEN condition");
+    assert_eq!(
+        suggestions.len(),
+        1,
+        "Expected suggestion for BETWEEN condition"
+    );
 
     match &suggestions[0].action {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
-            assert!(probe.contains("date_col"), "Probe should reference date_col: {}", probe);
+            assert!(
+                probe.contains("date_col"),
+                "Probe should reference date_col: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }
@@ -136,14 +194,21 @@ fn test_between_columns() {
 /// WHERE with LIKE
 #[test]
 fn test_like_columns() {
-    let (_statements, suggestions) =
-        test_rewrite("SELECT * FROM t WHERE t.name LIKE '%test%'");
-    assert_eq!(suggestions.len(), 1, "Expected suggestion for LIKE condition");
+    let (_statements, suggestions) = test_rewrite("SELECT * FROM t WHERE t.name LIKE '%test%'");
+    assert_eq!(
+        suggestions.len(),
+        1,
+        "Expected suggestion for LIKE condition"
+    );
 
     match &suggestions[0].action {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
-            assert!(probe.contains("name"), "Probe should reference name: {}", probe);
+            assert!(
+                probe.contains("name"),
+                "Probe should reference name: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }
@@ -152,14 +217,21 @@ fn test_like_columns() {
 /// Function-wrapped columns
 #[test]
 fn test_function_call_columns() {
-    let (_statements, suggestions) =
-        test_rewrite("SELECT * FROM t WHERE UPPER(t.name) = 'TEST'");
-    assert_eq!(suggestions.len(), 1, "Expected suggestion for function-wrapped column");
+    let (_statements, suggestions) = test_rewrite("SELECT * FROM t WHERE UPPER(t.name) = 'TEST'");
+    assert_eq!(
+        suggestions.len(),
+        1,
+        "Expected suggestion for function-wrapped column"
+    );
 
     match &suggestions[0].action {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
-            assert!(probe.contains("name"), "Probe should reference name inside function: {}", probe);
+            assert!(
+                probe.contains("name"),
+                "Probe should reference name inside function: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }
@@ -176,12 +248,18 @@ fn test_join_condition_columns() {
     match &suggestions[0].action {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
-            assert!(probe.contains("status"), "Probe should reference status: {}", probe);
-            assert!(probe.contains("user_id") && probe.contains("id"),
+            assert!(
+                probe.contains("status"),
+                "Probe should reference status: {}",
+                probe
+            );
+            assert!(
+                probe.contains("user_id") && probe.contains("id"),
                 "Probe should reference JOIN columns: {}",
                 probe
             );
-            assert!(probe.contains("user_id_non_null") || probe.contains("id_non_null"),
+            assert!(
+                probe.contains("user_id_non_null") || probe.contains("id_non_null"),
                 "Probe should have non_null aliases: {}",
                 probe
             );

@@ -30,8 +30,10 @@ fn test_param_eq_generates_range_probe() {
     let mut vars = HashSet::new();
     vars.insert("p_status".to_string());
 
-    let (_statements, suggestions) =
-        test_rewrite_with_vars("SELECT * FROM t WHERE status = p_status AND type = 'A'", vars);
+    let (_statements, suggestions) = test_rewrite_with_vars(
+        "SELECT * FROM t WHERE status = p_status AND type = 'A'",
+        vars,
+    );
 
     assert_eq!(suggestions.len(), 1);
 
@@ -41,8 +43,16 @@ fn test_param_eq_generates_range_probe() {
             let upper = probe.to_uppercase();
             assert!(upper.contains("MIN("), "Probe should have MIN: {}", probe);
             assert!(upper.contains("MAX("), "Probe should have MAX: {}", probe);
-            assert!(upper.contains("COUNT(DISTINCT"), "Probe should have COUNT(DISTINCT): {}", probe);
-            assert!(upper.contains("COUNT"), "Probe should have COUNT: {}", probe);
+            assert!(
+                upper.contains("COUNT(DISTINCT"),
+                "Probe should have COUNT(DISTINCT): {}",
+                probe
+            );
+            assert!(
+                upper.contains("COUNT"),
+                "Probe should have COUNT: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }
@@ -52,10 +62,12 @@ fn test_param_eq_generates_range_probe() {
 fn test_no_param_eq_no_match() {
     let vars = HashSet::new();
 
-    let (_statements, suggestions) =
-        test_rewrite_with_vars("SELECT * FROM t WHERE id = 1", vars);
+    let (_statements, suggestions) = test_rewrite_with_vars("SELECT * FROM t WHERE id = 1", vars);
 
-    assert!(suggestions.is_empty(), "Should not match without parameterized equality");
+    assert!(
+        suggestions.is_empty(),
+        "Should not match without parameterized equality"
+    );
 }
 
 #[test]
@@ -83,8 +95,16 @@ fn test_multiple_param_columns() {
     match &suggestions[0].action {
         RewriteAction::Generate { stmt, .. } => {
             let probe = SqlFormatter::new().format_statement(stmt);
-            assert!(probe.contains("status"), "Probe should reference status: {}", probe);
-            assert!(probe.contains("type"), "Probe should reference type: {}", probe);
+            assert!(
+                probe.contains("status"),
+                "Probe should reference status: {}",
+                probe
+            );
+            assert!(
+                probe.contains("type"),
+                "Probe should reference type: {}",
+                probe
+            );
         }
         _ => panic!("Expected Generate action"),
     }
