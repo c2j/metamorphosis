@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-ogsql-parser = { git = "https://github.com/c2j/ogsql-parser" }
+ogsql-parser.workspace = true
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
