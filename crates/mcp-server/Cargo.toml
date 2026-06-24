@@ -10,7 +10,7 @@ metamorphosis-core = { path = "../core" }
 metamorphosis-rules = { path = "../rules" }
 metamorphosis-qed = { path = "../qed" }
 metamorphosis-verieql = { path = "../verieql" }
-ogsql-parser = { git = "https://github.com/c2j/ogsql-parser" }
+ogsql-parser.workspace = true
 rmcp = { version = "0.16", features = ["server", "macros", "schemars", "transport-io"] }
 tokio = { version = "1", features = ["io-std", "rt", "macros"] }
 serde = { version = "1", features = ["derive"] }

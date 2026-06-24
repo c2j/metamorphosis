@@ -7,5 +7,5 @@ license.workspace = true
 
 [dependencies]
 metamorphosis-core = { path = "../core" }
-ogsql-parser = { git = "https://github.com/c2j/ogsql-parser" }
+ogsql-parser.workspace = true
 tracing = "0.1"
