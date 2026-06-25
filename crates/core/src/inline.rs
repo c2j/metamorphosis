@@ -117,6 +117,10 @@ pub(crate) struct InlineStats {
 /// Rules (in order):
 /// - `"NULL"` (case insensitive) → [`Null`](InlineValue::Null)
 /// - `"TRUE"` / `"FALSE"` (case insensitive) → [`Boolean`](InlineValue::Boolean)
+/// - Rule 2: SQL-style single-quoted string (e.g. `"'O''Brien'"`, `"'001'"`) →
+///   [`String`](InlineValue::String) with `''` unescaped to `'`
+/// - Rule 1: Leading-zero all-digit string (e.g. `"001"`, `"010"`) →
+///   [`String`](InlineValue::String) (preserves numeric codes)
 /// - Parses as `i64` → [`Integer`](InlineValue::Integer)
 /// - Parses as `f64` → [`Float`](InlineValue::Float) (stores original string)
 /// - Otherwise → [`String`](InlineValue::String)
@@ -127,6 +131,18 @@ pub fn infer_value(s: &str) -> InlineValue {
         "FALSE" => return InlineValue::Boolean(false),
         _ => {}
     }
+
+    // Rule 2: `'...'` forces string type; SQL `''` escape → `'`.
+    if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
+        let inner = &s[1..s.len() - 1];
+        return InlineValue::String(inner.replace("''", "'"));
+    }
+
+    // Rule 1: leading-zero digits (e.g. "001") → String; bare "0" stays Integer.
+    if s.len() > 1 && s.starts_with('0') && s.bytes().all(|b| b.is_ascii_digit()) {
+        return InlineValue::String(s.to_string());
+    }
+
     if let Ok(n) = s.parse::<i64>() {
         return InlineValue::Integer(n);
     }
@@ -143,9 +159,10 @@ pub fn infer_value(s: &str) -> InlineValue {
 /// * `stmt` — The parsed SQL [`Statement`].
 /// * `params` — Named and positional parameter values to substitute.
 /// * `known_variables` — Optional set of variable names from a stored procedure
-///   declaration. When provided, [`Expr::ColumnRef`] nodes whose last segment
-///   matches a known variable name are replaced. When `None`, `ColumnRef` nodes
-///   are never touched (only explicit parameter nodes are substituted).
+///   declaration. When provided, only names in this set are substituted
+///   (whitelist is exclusive). When `None`, ColumnRef nodes whose last segment
+///   matches a key in `params.named` are substituted (user-provided --param
+///   values serve as an implicit variable whitelist).
 pub fn inline_statement(
     stmt: &Statement,
     params: &InlineParams,

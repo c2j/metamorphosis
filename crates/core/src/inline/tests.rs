@@ -90,6 +90,44 @@ fn test_infer_value() {
 }
 
 #[test]
+fn test_infer_value_leading_zero_code() {
+    assert_eq!(infer_value("001"), InlineValue::String("001".into()));
+    assert_eq!(infer_value("00012"), InlineValue::String("00012".into()));
+    assert_eq!(infer_value("010"), InlineValue::String("010".into()));
+}
+
+#[test]
+fn test_infer_value_single_zero_still_integer() {
+    assert_eq!(infer_value("0"), InlineValue::Integer(0));
+}
+
+#[test]
+fn test_infer_value_explicit_sql_string_simple() {
+    assert_eq!(infer_value("'001'"), InlineValue::String("001".into()));
+    assert_eq!(infer_value("'hello'"), InlineValue::String("hello".into()));
+}
+
+#[test]
+fn test_infer_value_explicit_sql_string_with_escape() {
+    assert_eq!(
+        infer_value("'O''Brien'"),
+        InlineValue::String("O'Brien".into())
+    );
+}
+
+#[test]
+fn test_infer_value_explicit_sql_string_empty() {
+    assert_eq!(infer_value("''"), InlineValue::String(String::new()));
+}
+
+#[test]
+fn test_infer_value_normal_integers_unchanged() {
+    assert_eq!(infer_value("100"), InlineValue::Integer(100));
+    assert_eq!(infer_value("42"), InlineValue::Integer(42));
+    assert_eq!(infer_value("-5"), InlineValue::Integer(-5));
+}
+
+#[test]
 fn test_jdbc_param_simple() {
     let result = inline_sql(
         "SELECT * FROM t WHERE id = ?",
@@ -180,7 +218,7 @@ fn test_jdbc_param_in_between() {
 
 #[test]
 fn test_mybatis_param() {
-    let sql = "SELECT * FROM t WHERE status = #{status}";
+    let sql = "SELECT * FROM t WHERE col = #{status}";
     let stmts = parse_mybatis(sql);
     assert!(!stmts.is_empty(), "Expected at least one statement");
     let result = inline_statement(
@@ -201,7 +239,7 @@ fn test_mybatis_param() {
 
 #[test]
 fn test_mybatis_raw_expr() {
-    let sql = "SELECT * FROM t WHERE type = ${type}";
+    let sql = "SELECT * FROM t WHERE col = ${type}";
     let stmts = parse_mybatis(sql);
     assert!(!stmts.is_empty(), "Expected at least one statement");
     let result = inline_statement(
@@ -254,7 +292,7 @@ fn test_stored_proc_variable() {
 }
 
 #[test]
-fn test_stored_proc_without_known_vars() {
+fn test_stored_proc_fallback_to_params_named() {
     let result = inline_sql(
         "SELECT * FROM t WHERE col = in_accnt_date",
         &InlineParams {
@@ -268,8 +306,13 @@ fn test_stored_proc_without_known_vars() {
         },
         None,
     );
-    assert_eq!(result.replaced_named, 0);
+    assert_eq!(
+        result.replaced_named, 1,
+        "Fallback should substitute when name matches params.named"
+    );
     assert!(result.remaining.is_empty());
+    let sql = format_stmt(&result.statement);
+    assert!(sql.contains("'20240101'"), "Expected '20240101' in: {sql}");
 }
 
 #[test]
@@ -286,6 +329,59 @@ fn test_stored_proc_column_not_replaced() {
     );
     assert_eq!(result.replaced_named, 0);
     assert!(result.remaining.is_empty());
+}
+
+#[test]
+fn test_no_fallback_when_name_not_in_params() {
+    let result = inline_sql(
+        "SELECT * FROM t WHERE col = some_real_column",
+        &InlineParams::default(),
+        None,
+    );
+    assert_eq!(result.replaced_named, 0);
+    assert!(result.remaining.is_empty());
+}
+
+#[test]
+fn test_fallback_substitutes_qualified_columns() {
+    let result = inline_sql(
+        "SELECT * FROM t WHERE t.id = p_id AND other = p_id",
+        &InlineParams {
+            named: [("p_id".into(), InlineValue::Integer(42))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        },
+        None,
+    );
+    assert_eq!(result.replaced_named, 2);
+    let sql = format_stmt(&result.statement);
+    assert!(!sql.contains("p_id"), "Expected p_id to be replaced in: {sql}");
+}
+
+#[test]
+fn test_empty_whitelist_disables_columnref_fallback() {
+    // Regression for MyBatis collision: when known_vars is Some(empty),
+    // ColumnRef is NOT substituted even if name matches params.named.
+    // MyBatisParam substitution still works normally.
+    let stmts = parse_mybatis("SELECT * FROM t WHERE status = #{status}");
+    assert!(!stmts.is_empty());
+    let result = inline_statement(
+        &stmts[0],
+        &InlineParams {
+            named: [("status".into(), InlineValue::String("active".into()))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        },
+        Some(&HashSet::new()),
+    );
+    assert_eq!(result.replaced_named, 1, "Only the MyBatis param should be replaced, not the ColumnRef");
+    let sql = format_stmt(&result.statement);
+    assert!(
+        !sql.contains("'active' = 'active'"),
+        "Double-substitution bug detected in: {sql}"
+    );
 }
 
 #[test]
@@ -430,7 +526,7 @@ fn test_inline_value_to_expr() {
 
 #[test]
 fn test_mixed_params() {
-    let sql = "SELECT * FROM t WHERE status = #{status} AND id = ?";
+    let sql = "SELECT * FROM t WHERE col = #{status} AND id = ?";
     let stmts = parse_mybatis(sql);
     assert!(!stmts.is_empty());
     let result = inline_statement(
