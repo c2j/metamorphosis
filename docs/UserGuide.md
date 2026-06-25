@@ -15,6 +15,7 @@
    - 2.3 [show-rules](#23-show-rules--列出规则)
    - 2.4 [verify](#24-verify--语义等价验证)
    - 2.5 [mcp](#25-mcp--启动-mcp-服务器)
+   - 2.6 [inline](#26-inline--参数内联)
 3. [内置规则详解](#3-内置规则详解)
 4. [Schema 配置](#4-schema-配置)
 5. [输入格式](#5-输入格式)
@@ -55,7 +56,7 @@ target/release/metamorphosis
 
 ## 2. CLI 命令详解
 
-Metamorphosis 提供五个子命令：`rewrite`、`suggest`、`show-rules`、`verify`、`mcp`。所有命令都通过 `metamorphosis <COMMAND>` 调用。
+Metamorphosis 提供六个子命令：`rewrite`、`suggest`、`show-rules`、`verify`、`mcp`、`inline`。所有命令都通过 `metamorphosis <COMMAND>` 调用。
 
 ### 2.1 `rewrite` - 自动重写
 
@@ -296,6 +297,91 @@ metamorphosis mcp
 ```
 
 该命令无需参数，启动后持续监听标准输入，直到 stdin 关闭。MCP 客户端需要将命令配置为外部工具。
+
+### 2.6 `inline` - 参数内联
+
+`inline` 将 SQL 中的参数占位符替换为字面量，输出可直接执行的 SQL。支持以下占位符风格：
+
+- JDBC 位置参数 `?`（用 `--val` 按顺序提供）
+- PostgreSQL 编号参数 `$1`、`$2`（同样用 `--val` 提供）
+- MyBatis 命名参数 `#{name}` / `${name}`（用 `--param` 提供）
+- 存储过程变量（`--procedure` 提供变量白名单；或当列名匹配 `--param` 的 key 时作为隐式回退替换）
+
+#### 参数表
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `--file <PATH>` | 可选 | 输入 SQL 文件路径。省略或传入 `-` 时从 stdin 读取 |
+| `--param <KEY=VALUE>` | 可重复 | 命名参数，值类型自动推断（见下表） |
+| `--param-string <KEY=VALUE>` | 可重复 | 命名参数，强制为字符串类型，绕过类型推断 |
+| `--val <VALUE>` | 可重复 | 位置参数值，按出现顺序对应 `?` / `$1`、`$2`…，类型推断同 `--param` |
+| `--params-file <PATH>` | 可选 | 从 JSON 文件加载参数 |
+| `--mybatis` | Flag | 启用 MyBatis `#{param}` / `${param}` 解析 |
+| `--procedure <PATH>` | 可选 | 存储过程文件路径，用于提取已声明的变量名白名单 |
+| `--from-procedure` | Flag | 将输入文件视为存储过程，提取其中的 SQL 语句逐条内联 |
+| `-o, --output <FORMAT>` | 可选 | 输出格式：`sql-only`（默认）/ `text` / `json` |
+
+#### 值类型推断规则
+
+`--param` 与 `--val` 的值按以下顺序推断为 SQL 字面量类型（`--param-string` 永远推断为字符串）：
+
+| 输入示例 | 推断结果 | 输出 SQL |
+|----------|----------|----------|
+| `NULL` / `TRUE` / `FALSE`（大小写不敏感） | NULL / 布尔 | `NULL` / `TRUE` / `FALSE` |
+| `'O''Brien'`、`'001'`（单引号包裹） | 字符串，`''` 还原为 `'` | `'O''Brien'`、`'001'` |
+| `001`、`010`（前导零全数字） | 字符串（保留数值码） | `'001'` |
+| `42`、`-1` | 整数 | `42`、`-1` |
+| `3.14` | 浮点 | `3.14` |
+| 其他 | 字符串 | `'...'` |
+| **`<base>::<type>` 类型转换** | Cast，`base` 递归推断 | `'20260101'::date` 等 |
+
+**类型转换 `::` 的处理**：值中出现的 `<base>::<type>` 会被识别为 SQL 类型转换，`::` 必须位于引号之外（因此 `'a::b'` 不会被误判）。`base` 按上表递归推断，`type` 原样保留（含精度，如 `numeric(10,2)`）。
+
+> ⚠️ **Shell 引号陷阱**：在 shell 中，`--param d='20260101'::date` 的单引号会被 shell 吃掉，程序实际收到 `d=20260101::date`，此时 `20260101` 会被推断为**整数**，输出 `20260101::date`（在 openGauss 中 integer→date 无隐式转换会报错）。要得到正确的 `'20260101'::date`，请用**双引号包裹整个参数**，让内层单引号存活：
+
+```bash
+--param "d='20260101'::date"
+```
+
+#### 示例
+
+**命名参数（MyBatis `#{}` / 变量）**
+
+```bash
+metamorphosis inline --file query.sql --mybatis --param status=active --param level=3
+```
+
+**JDBC 位置参数 `?`**
+
+```bash
+metamorphosis inline --file query.sql --val ACC001 --val 100
+```
+
+**存储过程变量内联**
+
+```bash
+metamorphosis inline --file proc.sql --from-procedure \
+  --param p_i_coincode=001 --param-string p_i_scdm=1 \
+  --param "v_date='20260101'::date"
+```
+
+上述 `v_date` 会输出 `'20260101'::date`，而非把 `::date` 错误吞进字符串。
+
+**从 JSON 文件加载参数**
+
+```bash
+metamorphosis inline --file query.sql --params-file params.json
+```
+
+`params.json` 格式：
+
+```json
+{
+  "status": "active",
+  "level": 3,
+  "positional": ["ACC001", 100]
+}
+```
 
 ---
 
