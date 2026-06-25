@@ -1214,3 +1214,52 @@ fn test_function_wrapped_equality_extracts_column_and_drops_predicate() {
         probe
     );
 }
+
+// ── Level 11: Outer WHERE merged into inner scope (cacase7) ──
+
+#[test]
+fn test_outer_where_merged_into_inner_scope() {
+    let mut vars = HashSet::new();
+    for v in ["p_i_scdm", "p_i_coincode", "v_date"] {
+        vars.insert(v.to_string());
+    }
+    let (_stmts, suggestions) = test_suggest_with_vars(
+        "select close_date into v_close_date \
+         from (select t.close_date, t.market_code, p_i_coincode coin_code \
+               from par_oper_close_date t \
+               where t.market_code = p_i_scdm \
+                 and (t.coin_code = '000' or t.coin_code = p_i_coincode)) \
+         where market_code = p_i_scdm \
+           and coin_code = p_i_coincode \
+           and close_date = to_char(v_date, 'yyyymmdd')",
+        vars,
+    );
+
+    assert_eq!(
+        suggestions.len(),
+        1,
+        "exactly one merged probe expected, got {} suggestion(s)",
+        suggestions.len()
+    );
+
+    let probe = format_probe(&suggestions).expect("Expected Generate action");
+    let lower = probe.to_lowercase();
+
+    assert!(
+        lower.contains("par_oper_close_date"),
+        "FROM must reference the base table, got: {}",
+        probe
+    );
+    for col in ["market_code", "coin_code", "close_date"] {
+        assert!(
+            lower.contains(col),
+            "GROUP BY must include {col} (outer WHERE merged into base scope), got: {}",
+            probe
+        );
+    }
+    assert!(
+        !lower.contains("p_i_coincode = p_i_coincode"),
+        "resolved tautology `coin_code = p_i_coincode` must not leak as a self-comparison: {}",
+        probe
+    );
+}
