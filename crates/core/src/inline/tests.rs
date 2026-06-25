@@ -121,6 +121,142 @@ fn test_infer_value_explicit_sql_string_empty() {
 }
 
 #[test]
+fn test_infer_value_cast_string_base() {
+    assert_eq!(
+        infer_value("'20260101'::date"),
+        InlineValue::Cast {
+            value: Box::new(InlineValue::String("20260101".into())),
+            type_name: "date".into(),
+        }
+    );
+}
+
+#[test]
+fn test_infer_value_cast_integer_base() {
+    assert_eq!(
+        infer_value("42::int"),
+        InlineValue::Cast {
+            value: Box::new(InlineValue::Integer(42)),
+            type_name: "int".into(),
+        }
+    );
+}
+
+#[test]
+fn test_infer_value_cast_preserves_type_args() {
+    assert_eq!(
+        infer_value("'5'::numeric(10,2)"),
+        InlineValue::Cast {
+            value: Box::new(InlineValue::String("5".into())),
+            type_name: "numeric(10,2)".into(),
+        }
+    );
+}
+
+#[test]
+fn test_infer_value_cast_with_escaped_quote_in_base() {
+    assert_eq!(
+        infer_value("'O''Brien'::text"),
+        InlineValue::Cast {
+            value: Box::new(InlineValue::String("O'Brien".into())),
+            type_name: "text".into(),
+        }
+    );
+}
+
+#[test]
+fn test_infer_value_cast_unquoted_shell_stripped() {
+    // After shell quote-stripping the program sees `20260101::date`:
+    // base infers to Integer, cast is still preserved.
+    assert_eq!(
+        infer_value("20260101::date"),
+        InlineValue::Cast {
+            value: Box::new(InlineValue::Integer(20260101)),
+            type_name: "date".into(),
+        }
+    );
+}
+
+#[test]
+fn test_infer_value_quoted_string_with_inner_colons_not_cast() {
+    // `::` inside quotes must not be treated as a cast.
+    assert_eq!(
+        infer_value("'a::b'"),
+        InlineValue::String("a::b".into())
+    );
+}
+
+#[test]
+fn test_infer_value_single_colon_not_cast() {
+    assert_eq!(infer_value("12:30"), InlineValue::String("12:30".into()));
+}
+
+#[test]
+fn test_inline_value_cast_to_sql_literal() {
+    assert_eq!(
+        InlineValue::Cast {
+            value: Box::new(InlineValue::String("20260101".into())),
+            type_name: "date".into(),
+        }
+        .to_sql_literal(),
+        "'20260101'::date"
+    );
+    assert_eq!(
+        InlineValue::Cast {
+            value: Box::new(InlineValue::Integer(42)),
+            type_name: "int".into(),
+        }
+        .to_sql_literal(),
+        "42::int"
+    );
+}
+
+#[test]
+fn test_inline_value_cast_to_expr() {
+    let expr = InlineValue::Cast {
+        value: Box::new(InlineValue::String("20260101".into())),
+        type_name: "date".into(),
+    }
+    .to_expr();
+    match expr {
+        Expr::TypeCast { type_name, .. } => match type_name {
+            DataType::Custom(name, _) => {
+                assert_eq!(name.len(), 1);
+                assert_eq!(name[0].value, "date");
+            }
+            other => panic!("expected DataType::Custom, got {other:?}"),
+        },
+        other => panic!("expected Expr::TypeCast, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_inline_cast_in_statement() {
+    let result = inline_sql(
+        "SELECT * FROM t WHERE d = v_date",
+        &InlineParams {
+            named: [(
+                "v_date".into(),
+                InlineValue::Cast {
+                    value: Box::new(InlineValue::String("20260101".into())),
+                    type_name: "date".into(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+        None,
+    );
+    assert_eq!(result.replaced_named, 1);
+    let sql = format_stmt(&result.statement);
+    assert!(
+        sql.contains("'20260101'::date"),
+        "Expected '20260101'::date in: {sql}"
+    );
+}
+
+#[test]
 fn test_infer_value_normal_integers_unchanged() {
     assert_eq!(infer_value("100"), InlineValue::Integer(100));
     assert_eq!(infer_value("42"), InlineValue::Integer(42));
