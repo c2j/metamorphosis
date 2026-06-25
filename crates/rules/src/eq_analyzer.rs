@@ -6,9 +6,9 @@
 //! parameterized vs. literal equality conditions in WHERE clauses.
 
 use ogsql_parser::ast::{
-    Expr, Ident, InsertSource, ObjectName, SelectStatement, Statement, TableRef,
+    Expr, Ident, InsertSource, ObjectName, SelectStatement, SelectTarget, Statement, TableRef,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Collected equality predicate information from a WHERE clause.
 pub(crate) struct EqPredicateCollector {
@@ -165,9 +165,24 @@ impl EqPredicateCollector {
                 self.has_subquery = true;
                 self.non_eq.push(make_binary_eq(left, right));
             }
-            // Column = other expression → non_eq
-            (Expr::ColumnRef(_), _) | (_, Expr::ColumnRef(_)) => {
-                self.non_eq.push(make_binary_eq(left, right));
+            // Column = other expression → tier1 if the other side is
+            // parameter-driven (incl. function-wrapped vars like to_char(v)),
+            // otherwise non_eq.
+            (Expr::ColumnRef(name), other) | (other, Expr::ColumnRef(name)) => {
+                let (params, _cols) = {
+                    let mut params = Vec::new();
+                    let mut cols = Vec::new();
+                    classify_expr_columns(other, self, &mut params, &mut cols);
+                    (params, cols)
+                };
+                if !params.is_empty() || contains_param(other) {
+                    self.tier1.push(name.clone());
+                    for p in params {
+                        self.param_names.insert(p);
+                    }
+                } else {
+                    self.non_eq.push(make_binary_eq(left, right));
+                }
             }
             // Neither side is a bare ColumnRef — e.g. function-wrapped columns
             // like `substr(t.code, 1, 17) = substr(v_param, 1, 17)`. Recursively
@@ -370,19 +385,171 @@ impl EqPredicateCollector {
 
 /// Resolve the effective WHERE clause and FROM for analysis.
 ///
-/// When the outer query is a wrapper pattern (`SELECT ... FROM (subquery) WHERE pagination`)
-/// with a single Subquery, unwrap to analyze the inner query's real WHERE clause.
-/// This handles patterns like:
-/// ```sql
-/// SELECT ... FROM (SELECT ... FROM t1 WHERE ... AND ...) WHERE rn BETWEEN ...
-/// ```
-pub(crate) fn resolve_query(select: &SelectStatement) -> (&Option<Expr>, &[TableRef]) {
+/// When the outer query wraps a single subquery in FROM, the outer WHERE is
+/// merged into the inner scope: outer column references are resolved through
+/// the subquery's projection list and AND-combined with the inner WHERE. This
+/// preserves real data filters (e.g. `close_date = to_char(v_date, ...)`) that
+/// a naive unwrap would discard. Pagination wrappers are unaffected: their
+/// predicates resolve to window functions (dropped) or non-parameterized
+/// conditions and contribute no tier-1 equalities.
+pub(crate) fn resolve_query(select: &SelectStatement) -> (Option<Expr>, &[TableRef]) {
     if select.from.len() == 1 {
-        if let TableRef::Subquery { query, .. } = &select.from[0] {
-            return (&query.where_clause, &query.from);
+        if let TableRef::Subquery {
+            query, alias, ..
+        } = &select.from[0]
+        {
+            let merged = merge_outer_where(
+                &select.where_clause,
+                &query.where_clause,
+                &query.targets,
+                alias.as_deref(),
+                &query.from,
+            );
+            return (merged, &query.from);
         }
     }
-    (&select.where_clause, &select.from)
+    (select.where_clause.clone(), &select.from)
+}
+
+/// Merge an outer query's WHERE into the inner subquery's scope.
+fn merge_outer_where(
+    outer_where: &Option<Expr>,
+    inner_where: &Option<Expr>,
+    inner_targets: &[SelectTarget],
+    subquery_alias: Option<&str>,
+    base_from: &[TableRef],
+) -> Option<Expr> {
+    let outer = match outer_where {
+        Some(e) => e,
+        None => return inner_where.clone(),
+    };
+
+    let proj_map = build_projection_map(inner_targets);
+
+    let mut base_aliases = HashSet::new();
+    for tr in base_from {
+        collect_table_aliases_recursive(tr, &mut base_aliases);
+    }
+
+    let substituted = substitute_outer_columns(outer, &proj_map, subquery_alias);
+
+    let mut conjunct_refs: Vec<&Expr> = Vec::new();
+    split_and_conjuncts_rec(&substituted, &mut conjunct_refs);
+
+    let mut surviving: Vec<Expr> = Vec::new();
+    for c in conjunct_refs {
+        if conjunct_keepable(c, &base_aliases) {
+            surviving.push(c.clone());
+        }
+    }
+
+    let inner_slice: &[Expr] = match inner_where {
+        Some(e) => std::slice::from_ref(e),
+        None => &[],
+    };
+    merge_exprs(inner_slice, &surviving)
+}
+
+fn build_projection_map(targets: &[SelectTarget]) -> HashMap<String, Expr> {
+    let mut map = HashMap::new();
+    for target in targets {
+        if let SelectTarget::Expr(expr, alias) = target {
+            let key = match alias {
+                Some(a) => Some(a.as_str().to_lowercase()),
+                None => match expr {
+                    Expr::ColumnRef(parts) => parts.last().map(|p| p.as_str().to_lowercase()),
+                    _ => None,
+                },
+            };
+            if let Some(k) = key {
+                map.entry(k).or_insert_with(|| expr.clone());
+            }
+        }
+    }
+    map
+}
+
+/// Recursively rewrite an expression, replacing outer column references with
+/// their projection sources. Covers the WHERE-structural variants
+/// (ColumnRef/BinaryOp/Parenthesized); other variants are cloned unchanged.
+fn substitute_outer_columns(
+    expr: &Expr,
+    proj_map: &HashMap<String, Expr>,
+    subquery_alias: Option<&str>,
+) -> Expr {
+    match expr {
+        Expr::ColumnRef(parts) => {
+            let lookup = |ident: &Ident| {
+                let lower = ident.as_str().to_lowercase();
+                proj_map.get(&lower).cloned()
+            };
+            match parts.len() {
+                1 => lookup(&parts[0]).unwrap_or_else(|| expr.clone()),
+                2 if subquery_alias.is_some_and(|a| a.eq_ignore_ascii_case(parts[0].as_str())) => {
+                    lookup(&parts[1]).unwrap_or_else(|| expr.clone())
+                }
+                _ => expr.clone(),
+            }
+        }
+        Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
+            left: Box::new(substitute_outer_columns(left, proj_map, subquery_alias)),
+            op: op.clone(),
+            right: Box::new(substitute_outer_columns(right, proj_map, subquery_alias)),
+        },
+        Expr::Parenthesized(inner) => Expr::Parenthesized(Box::new(substitute_outer_columns(
+            inner,
+            proj_map,
+            subquery_alias,
+        ))),
+        _ => expr.clone(),
+    }
+}
+
+fn split_and_conjuncts_rec<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
+    if let Expr::BinaryOp { left, op, right } = expr {
+        if op.eq_ignore_ascii_case("AND") {
+            split_and_conjuncts_rec(left, out);
+            split_and_conjuncts_rec(right, out);
+            return;
+        }
+    }
+    out.push(expr);
+}
+
+/// A merged conjunct is keepable iff it references a base-table column and
+/// contains no window function (which is invalid in WHERE).
+fn conjunct_keepable(expr: &Expr, base_aliases: &HashSet<String>) -> bool {
+    !expr_has_window_func(expr) && expr_has_base_column(expr, base_aliases)
+}
+
+fn expr_has_window_func(expr: &Expr) -> bool {
+    match expr {
+        Expr::FunctionCall { args, over, .. } => {
+            over.is_some() || args.iter().any(expr_has_window_func)
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            expr_has_window_func(left) || expr_has_window_func(right)
+        }
+        Expr::Parenthesized(inner) => expr_has_window_func(inner),
+        _ => false,
+    }
+}
+
+fn expr_has_base_column(expr: &Expr, base_aliases: &HashSet<String>) -> bool {
+    match expr {
+        Expr::ColumnRef(parts) => parts.first().is_some_and(|p| {
+            let lower = p.as_str().to_lowercase();
+            base_aliases.contains(&lower)
+        }),
+        Expr::BinaryOp { left, right, .. } => {
+            expr_has_base_column(left, base_aliases) || expr_has_base_column(right, base_aliases)
+        }
+        Expr::Parenthesized(inner) => expr_has_base_column(inner, base_aliases),
+        Expr::FunctionCall { args, .. } => {
+            args.iter().any(|a| expr_has_base_column(a, base_aliases))
+        }
+        _ => false,
+    }
 }
 
 /// Walk the WHERE clause and collect equality predicates.
@@ -683,7 +850,7 @@ pub(crate) fn extract_statement_scopes(
                 is_cte: false,
             });
 
-            scopes.extend(extract_query_scopes(where_clause, from, known_variables));
+            scopes.extend(extract_query_scopes(&where_clause, from, known_variables));
 
             extract_cte_scopes(&s.node.with, known_variables, &mut counter, &mut scopes);
         }
