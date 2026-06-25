@@ -295,7 +295,7 @@ fn test_inline_procedure_flag() {
     let proc_path = dir.path().join("vars_proc.sql");
     let sql_path = dir.path().join("query.sql");
     let mut f = std::fs::File::create(&proc_path).unwrap();
-    f.write_all(b"CREATE OR REPLACE PROCEDURE demo(p_id VARCHAR2) IS BEGIN NULL; END;")
+    f.write_all(b"CREATE OR REPLACE PROCEDURE demo(p_id VARCHAR2) IS BEGIN NULL; END.")
         .unwrap();
     let mut f = std::fs::File::create(&sql_path).unwrap();
     f.write_all(b"SELECT * FROM t WHERE id = p_id").unwrap();
@@ -319,6 +319,121 @@ fn test_inline_procedure_flag() {
     assert!(
         stdout.contains("ABC123") || stdout.contains("'ABC123'"),
         "Output should contain substituted 'ABC123', got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_inline_param_string_forces_string_type() {
+    // Escape hatch for shell quoting: bare "1" can't be String via --param alone.
+    let mut child = metamorphosis()
+        .arg("inline")
+        .arg("--param-string")
+        .arg("code=1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn metamorphosis inline");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"SELECT * FROM t WHERE id = code")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "inline --param-string should succeed. stderr: {}",
+        str::from_utf8(&output.stderr).unwrap()
+    );
+    let stdout = str::from_utf8(&output.stdout).unwrap();
+    assert!(
+        stdout.contains("'1'"),
+        "--param-string code=1 should produce quoted '1', got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_inline_param_vs_param_string_contrast() {
+    // Same value "1", different flag → Integer vs String. Justifies --param-string.
+    let sql = b"SELECT * FROM t WHERE id = code";
+
+    let out_param = metamorphosis()
+        .arg("inline")
+        .arg("--param")
+        .arg("code=1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn failed");
+    let mut out_param = out_param;
+    out_param.stdin.as_mut().unwrap().write_all(sql).unwrap();
+    let param_output = out_param.wait_with_output().unwrap();
+    let param_stdout = String::from_utf8_lossy(&param_output.stdout).to_string();
+
+    let mut out_str = metamorphosis()
+        .arg("inline")
+        .arg("--param-string")
+        .arg("code=1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn failed");
+    out_str.stdin.as_mut().unwrap().write_all(sql).unwrap();
+    let str_output = out_str.wait_with_output().unwrap();
+    let str_stdout = String::from_utf8_lossy(&str_output.stdout).to_string();
+
+    assert!(
+        param_stdout.contains("= 1") && !param_stdout.contains("'1'"),
+        "--param code=1 should be integer 1, got: {}",
+        param_stdout
+    );
+    assert!(
+        str_stdout.contains("'1'"),
+        "--param-string code=1 should be quoted '1', got: {}",
+        str_stdout
+    );
+}
+
+#[test]
+fn test_inline_mybatis_no_columnref_collision() {
+    // Regression: --mybatis --param status=active on `WHERE status = #{status}`
+    // must NOT double-substitute the bare ColumnRef `status`.
+    let mut child = metamorphosis()
+        .arg("inline")
+        .arg("--mybatis")
+        .arg("--param")
+        .arg("status=active")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn metamorphosis inline");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"SELECT * FROM t WHERE status = #{status}")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "inline --mybatis should succeed. stderr: {}",
+        str::from_utf8(&output.stderr).unwrap()
+    );
+    let stdout = str::from_utf8(&output.stdout).unwrap();
+    assert!(
+        !stdout.contains("'active' = 'active'"),
+        "Double-substitution bug: ColumnRef + MyBatisParam both replaced. Got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("status = 'active'"),
+        "MyBatis param should be substituted but ColumnRef preserved. Got: {}",
         stdout
     );
 }
