@@ -394,10 +394,7 @@ impl EqPredicateCollector {
 /// conditions and contribute no tier-1 equalities.
 pub(crate) fn resolve_query(select: &SelectStatement) -> (Option<Expr>, &[TableRef]) {
     if select.from.len() == 1 {
-        if let TableRef::Subquery {
-            query, alias, ..
-        } = &select.from[0]
-        {
+        if let TableRef::Subquery { query, alias, .. } = &select.from[0] {
             let merged = merge_outer_where(
                 &select.where_clause,
                 &query.where_clause,
