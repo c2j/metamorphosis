@@ -356,7 +356,10 @@ fn test_fallback_substitutes_qualified_columns() {
     );
     assert_eq!(result.replaced_named, 2);
     let sql = format_stmt(&result.statement);
-    assert!(!sql.contains("p_id"), "Expected p_id to be replaced in: {sql}");
+    assert!(
+        !sql.contains("p_id"),
+        "Expected p_id to be replaced in: {sql}"
+    );
 }
 
 #[test]
@@ -376,7 +379,10 @@ fn test_empty_whitelist_disables_columnref_fallback() {
         },
         Some(&HashSet::new()),
     );
-    assert_eq!(result.replaced_named, 1, "Only the MyBatis param should be replaced, not the ColumnRef");
+    assert_eq!(
+        result.replaced_named, 1,
+        "Only the MyBatis param should be replaced, not the ColumnRef"
+    );
     let sql = format_stmt(&result.statement);
     assert!(
         !sql.contains("'active' = 'active'"),

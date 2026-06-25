@@ -298,12 +298,11 @@ pub fn run_inline(
     //    - --mybatis without --procedure → empty whitelist (disable ColumnRef
     //      fallback so `WHERE col = #{col}` doesn't double-substitute)
     //    - Neither → None (fallback mode: ColumnRef matches params.named keys)
-    let known_vars: Option<HashSet<String>> =
-        match crate::load_procedure_variables(procedure) {
-            Some(vars) => Some(vars),
-            None if mybatis => Some(HashSet::new()),
-            None => None,
-        };
+    let known_vars: Option<HashSet<String>> = match crate::load_procedure_variables(procedure) {
+        Some(vars) => Some(vars),
+        None if mybatis => Some(HashSet::new()),
+        None => None,
+    };
 
     // 4. Parse SQL
     let (sql, source_label) = crate::resolve_input(&file);
