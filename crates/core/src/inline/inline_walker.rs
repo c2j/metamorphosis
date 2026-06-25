@@ -510,9 +510,12 @@ fn substitute_expr(
         }
 
         Expr::ColumnRef(parts) | Expr::ColumnRefOuterJoin(parts) => {
-            if let Some(vars) = known_vars {
-                if let Some(name) = parts.last() {
-                    let name_lower = name.to_lowercase();
+            if let Some(name) = parts.last() {
+                let name_lower = name.to_lowercase();
+
+                if let Some(vars) = known_vars {
+                    // Strict whitelist mode (--procedure was provided):
+                    // only substitute names that are declared variables.
                     if vars.contains(&name_lower) {
                         let val = params
                             .named
@@ -533,6 +536,20 @@ fn substitute_expr(
                             }
                         };
                     }
+                    // Name not in whitelist → treat as real column, no fallback.
+                    return expr.clone();
+                }
+
+                // Fallback mode (no --procedure): if the user explicitly provided a
+                // --param with this name, treat the ColumnRef as a variable.
+                // Without this, --param would be silently ignored for bare SQL files.
+                if let Some(val) = params
+                    .named
+                    .get(name.as_str())
+                    .or_else(|| params.named.get(&name_lower))
+                {
+                    stats.replaced_named += 1;
+                    return val.to_expr();
                 }
             }
             expr.clone()

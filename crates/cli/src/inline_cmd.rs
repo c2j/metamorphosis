@@ -4,8 +4,12 @@
 //! Supports three parameter styles:
 //! - **JDBC `?`** positional parameters (`--val` / `--params-file`)
 //! - **MyBatis `#{name}`** named parameters (`--param` / `--params-file`)
-//! - **Stored proc variables** (ColumnRef, gated by `known_variables` from
-//!   `--procedure` or `--from-procedure`)
+//! - **Stored proc variables** (ColumnRef): when `--procedure`/`--from-procedure`
+//!   is provided, only declared variables are substituted; otherwise, ColumnRef
+//!   names that match a `--param` key are substituted as an explicit fallback
+//!
+//! Use `--param-string key=value` to force the value to String type, bypassing
+//! `infer_value` (e.g. for single-digit codes that should remain quoted in SQL).
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -22,6 +26,14 @@ fn parse_kv(s: &str) -> Option<(String, InlineValue)> {
     let eq_idx = s.find('=')?;
     let key = s[..eq_idx].trim().to_string();
     let value = infer_value(s[eq_idx + 1..].trim());
+    Some((key, value))
+}
+
+/// Parse a `--param-string "key=value"` pair; value is always `InlineValue::String`.
+fn parse_string_kv(s: &str) -> Option<(String, InlineValue)> {
+    let eq_idx = s.find('=')?;
+    let key = s[..eq_idx].trim().to_string();
+    let value = InlineValue::String(s[eq_idx + 1..].trim().to_string());
     Some((key, value))
 }
 
@@ -240,6 +252,7 @@ fn run_inline_from_procedure(
 pub fn run_inline(
     file: Option<PathBuf>,
     params_named: Vec<String>,
+    params_string: Vec<String>,
     params_positional: Vec<String>,
     params_file: Option<PathBuf>,
     mybatis: bool,
@@ -260,6 +273,12 @@ pub fn run_inline(
         }
     }
 
+    for kv in &params_string {
+        if let Some((k, v)) = parse_string_kv(kv) {
+            params.named.insert(k, v);
+        }
+    }
+
     for v in &params_positional {
         params.positional.push(infer_value(v));
     }
@@ -274,8 +293,17 @@ pub fn run_inline(
         return;
     }
 
-    // 3. Load known_variables from --procedure (if provided)
-    let known_vars: Option<HashSet<String>> = crate::load_procedure_variables(procedure);
+    // 3. Determine known_variables gating mode.
+    //    - --procedure provided → strict whitelist from procedure declarations
+    //    - --mybatis without --procedure → empty whitelist (disable ColumnRef
+    //      fallback so `WHERE col = #{col}` doesn't double-substitute)
+    //    - Neither → None (fallback mode: ColumnRef matches params.named keys)
+    let known_vars: Option<HashSet<String>> =
+        match crate::load_procedure_variables(procedure) {
+            Some(vars) => Some(vars),
+            None if mybatis => Some(HashSet::new()),
+            None => None,
+        };
 
     // 4. Parse SQL
     let (sql, source_label) = crate::resolve_input(&file);

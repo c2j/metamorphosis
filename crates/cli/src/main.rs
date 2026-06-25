@@ -192,6 +192,11 @@ enum Command {
         /// Named parameter (repeatable): --param status=active
         #[arg(long = "param")]
         params_named: Vec<String>,
+        /// Named parameter forced to String type, bypassing type inference
+        /// (repeatable): --param-string code=1 → '1' (not integer 1).
+        /// Use for single-digit values, or when infer_value misclassifies.
+        #[arg(long = "param-string")]
+        params_string: Vec<String>,
         /// Positional parameter value in order (repeatable): --val active --val 1
         #[arg(long = "val")]
         params_positional: Vec<String>,
@@ -292,6 +297,7 @@ fn main() {
         Command::Inline {
             file,
             params_named,
+            params_string,
             params_positional,
             params_file,
             mybatis,
@@ -301,6 +307,7 @@ fn main() {
         } => inline_cmd::run_inline(
             file,
             params_named,
+            params_string,
             params_positional,
             params_file,
             mybatis,
