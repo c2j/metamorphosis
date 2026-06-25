@@ -1,4 +1,4 @@
-# Metamorphosis v0.1.29
+# Metamorphosis v0.2.0
 
 [中文](#中文) | [English](#english)
 
