@@ -1,0 +1,1 @@
+SELECT * FROM orders AS o WHERE o.user_id IN (SELECT u.id FROM users AS u GROUP BY u.id HAVING COUNT(*) > 0)

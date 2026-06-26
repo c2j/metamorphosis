@@ -1,0 +1,1 @@
+SELECT DISTINCT * FROM t WHERE a = 1 OR b = 2

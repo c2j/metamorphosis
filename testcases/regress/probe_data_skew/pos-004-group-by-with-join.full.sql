@@ -1,0 +1,1 @@
+SELECT d.dept_name, count(1) AS cnt FROM departments AS d INNER JOIN employees AS e ON d.id = e.dept_id GROUP BY d.dept_name ORDER BY cnt DESC LIMIT 10

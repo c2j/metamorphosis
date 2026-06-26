@@ -1,0 +1,1 @@
+SELECT t.task_status, count(1) AS cnt FROM t WHERE t.clear_type = '4' GROUP BY t.task_status ORDER BY cnt DESC LIMIT 10

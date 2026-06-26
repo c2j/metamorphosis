@@ -1,0 +1,3 @@
+-- This Manual rule produces a RewriteAction::Suggest (not Generate/Replace).
+-- The harness verifies result.suggestions is non-empty, confirming the
+-- critical suggestion was emitted.

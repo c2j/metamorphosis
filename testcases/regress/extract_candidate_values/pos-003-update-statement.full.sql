@@ -1,0 +1,1 @@
+SELECT order_id, count(1) AS cnt WHERE region = 'EAST' GROUP BY order_id ORDER BY cnt DESC LIMIT 10

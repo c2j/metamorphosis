@@ -1,0 +1,1 @@
+SELECT status, count(1) AS cnt FROM orders GROUP BY status ORDER BY cnt DESC LIMIT 10

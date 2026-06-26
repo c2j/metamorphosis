@@ -1,0 +1,1 @@
+SELECT t.status, count(1) AS cnt FROM t GROUP BY t.status ORDER BY cnt DESC LIMIT 10

@@ -1,0 +1,1 @@
+SELECT min(u.status) AS u_status_min, max(u.status) AS u_status_max, count(DISTINCT u.status) AS u_status_distinct, count(1) AS total FROM orders AS o INNER JOIN users AS u ON o.user_id = u.id WHERE o.amount > 100

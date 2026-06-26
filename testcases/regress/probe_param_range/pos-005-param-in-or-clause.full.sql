@@ -1,0 +1,1 @@
+SELECT min(t.b) AS t_b_min, max(t.b) AS t_b_max, count(DISTINCT t.b) AS t_b_distinct, count(1) AS total FROM t WHERE t.a = '1'
