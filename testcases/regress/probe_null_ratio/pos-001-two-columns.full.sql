@@ -1,0 +1,1 @@
+SELECT count(1) AS total, count(col1) AS col1_non_null, count(col2) AS col2_non_null FROM t

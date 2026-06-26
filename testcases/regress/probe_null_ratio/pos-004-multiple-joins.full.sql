@@ -1,0 +1,1 @@
+SELECT count(1) AS total, count(a.status) AS a_status_non_null, count(b.id) AS b_id_non_null, count(c.bid) AS c_bid_non_null, count(a.id) AS a_id_non_null, count(b.aid) AS b_aid_non_null FROM a INNER JOIN b ON a.id = b.aid INNER JOIN c ON b.id = c.bid

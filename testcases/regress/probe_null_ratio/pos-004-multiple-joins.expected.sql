@@ -1,0 +1,5 @@
+total
+a_id_non_null
+b_aid_non_null
+b_id_non_null
+c_bid_non_null

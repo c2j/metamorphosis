@@ -1,0 +1,1 @@
+SELECT count(1) AS total, count(o.status) AS o_status_non_null, count(o.user_id) AS o_user_id_non_null, count(u.id) AS u_id_non_null FROM orders AS o INNER JOIN users AS u ON o.user_id = u.id

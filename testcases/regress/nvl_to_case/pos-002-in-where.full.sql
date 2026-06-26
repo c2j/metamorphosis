@@ -1,0 +1,1 @@
+SELECT * FROM t WHERE CASE WHEN status IS NULL THEN 'X' ELSE status END = 'Y'

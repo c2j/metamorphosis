@@ -1,0 +1,4 @@
+total
+col1_non_null
+col2_non_null
+col3_non_null

@@ -1,0 +1,1 @@
+SELECT * FROM t WHERE (col = 5) AND other = 1
