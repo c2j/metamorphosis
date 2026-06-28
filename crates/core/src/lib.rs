@@ -17,6 +17,6 @@ pub use inline::{
 };
 pub use registry::{RewriteRule, RuleRegistry};
 pub use types::{
-    Confidence, MatchFailure, MatchResult, RewriteAction, RewriteResult, RuleCategory, SafetyLevel,
-    Severity, Suggestion,
+    Confidence, DiagnosticHint, MatchFailure, MatchResult, RewriteAction, RewriteResult,
+    RuleCategory, SafetyLevel, Severity, Suggestion,
 };

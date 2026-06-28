@@ -1,5 +1,6 @@
 //! Rewrite context and configuration.
 
+use crate::types::DiagnosticHint;
 use ogsql_parser::analyzer::schema::SchemaMap;
 use std::collections::HashSet;
 
@@ -45,4 +46,9 @@ pub struct RewriteContext<'a> {
     /// When present, rules use this set to distinguish variables from table columns
     /// instead of relying solely on table alias heuristics.
     pub known_variables: Option<&'a HashSet<String>>,
+    /// Diagnostic hints from og explain-analyzer.
+    /// When present, rules may use this to augment or short-circuit their
+    /// own pattern detection.
+    /// When absent (None), rules run their original pattern detection logic.
+    pub diagnostic_hints: Option<&'a Vec<DiagnosticHint>>,
 }
