@@ -155,7 +155,9 @@ impl LoadedCases {
             }
             match Case::load(&path) {
                 Ok(c) => cases.push(c),
-                Err(CaseLoadError::Io { path, source }) if source.kind() == std::io::ErrorKind::NotFound => {
+                Err(CaseLoadError::Io { path, source })
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
                     eprintln!("warn: skipping '{}': missing case files", path.display());
                 }
                 Err(e) => return Err(e),
@@ -189,10 +191,14 @@ impl Case {
         let rewritten_sql = read_optional(dir, "rewritten.sql")?.unwrap_or_default();
 
         if original_sql.trim().is_empty() {
-            return Err(CaseLoadError::EmptySql { name: meta.name.clone() });
+            return Err(CaseLoadError::EmptySql {
+                name: meta.name.clone(),
+            });
         }
         if rewritten_sql.trim().is_empty() {
-            return Err(CaseLoadError::EmptySql { name: meta.name.clone() });
+            return Err(CaseLoadError::EmptySql {
+                name: meta.name.clone(),
+            });
         }
 
         let schema_sql = read_optional(dir, "schema.sql")?;
@@ -214,10 +220,7 @@ fn read_optional(dir: &Path, file: &str) -> Result<Option<String>, CaseLoadError
     match std::fs::read_to_string(&path) {
         Ok(s) => Ok(Some(s)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(CaseLoadError::Io {
-            path,
-            source,
-        }),
+        Err(source) => Err(CaseLoadError::Io { path, source }),
     }
 }
 

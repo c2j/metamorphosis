@@ -37,12 +37,12 @@ impl CaseReport {
         let Some(o) = &self.verify else {
             return self.verify_error.is_none();
         };
-        match (self.verify_expect, o.verdict) {
-            (VerifyExpect::Equivalent, VerifyVerdict::Equivalent) => true,
-            (VerifyExpect::NotEquivalent, VerifyVerdict::NotEquivalent) => true,
-            (VerifyExpect::Unknown, VerifyVerdict::Unknown) => true,
-            _ => false,
-        }
+        matches!(
+            (self.verify_expect, o.verdict),
+            (VerifyExpect::Equivalent, VerifyVerdict::Equivalent)
+                | (VerifyExpect::NotEquivalent, VerifyVerdict::NotEquivalent)
+                | (VerifyExpect::Unknown, VerifyVerdict::Unknown)
+        )
     }
 
     fn db_match(&self) -> bool {
@@ -55,11 +55,10 @@ impl CaseReport {
         let Some(o) = &self.db else {
             return self.db_error.is_none();
         };
-        match (self.db_expect, o.mismatch.is_some()) {
-            (DbExpect::Equal, false) => true,
-            (DbExpect::Mismatch, true) => true,
-            _ => false,
-        }
+        matches!(
+            (self.db_expect, o.mismatch.is_some()),
+            (DbExpect::Equal, false) | (DbExpect::Mismatch, true)
+        )
     }
 
     pub fn is_pass(&self) -> bool {
@@ -171,7 +170,9 @@ impl Report {
                     let mismatched = o.mismatch.is_some();
                     let actual = if mismatched { "mismatch" } else { "equal" };
                     let mark = match (case.meta.db.expect, mismatched) {
-                        (DbExpect::Equal, false) | (DbExpect::Mismatch, true) | (DbExpect::Any, _) => "✓",
+                        (DbExpect::Equal, false)
+                        | (DbExpect::Mismatch, true)
+                        | (DbExpect::Any, _) => "✓",
                         _ => "✗",
                     };
                     lines.push(format!(

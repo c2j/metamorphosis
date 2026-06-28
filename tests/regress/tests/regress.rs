@@ -44,9 +44,7 @@ fn run_all_regress_cases() {
                 true
             }
             Err(e) => {
-                eprintln!(
-                    "warning: database not reachable — db dimensions will be skipped: {e}"
-                );
+                eprintln!("warning: database not reachable — db dimensions will be skipped: {e}");
                 false
             }
         },
@@ -103,11 +101,7 @@ fn run_all_regress_cases() {
     eprintln!("{}", report.render_summary());
 
     if !failures.is_empty() {
-        panic!(
-            "{} case(s) failed: {}",
-            failures.len(),
-            failures.join(", ")
-        );
+        panic!("{} case(s) failed: {}", failures.len(), failures.join(", "));
     }
     if !unknowns.is_empty() {
         eprintln!(

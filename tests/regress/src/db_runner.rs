@@ -71,10 +71,12 @@ struct ResultSet {
 }
 
 pub fn run(case: &Case, conn_str: &str) -> Result<DbOutcome, DbRunnerError> {
-    let schema_sql = case.schema_sql.as_ref().ok_or(DbRunnerError::MissingSchema)?;
+    let schema_sql = case
+        .schema_sql
+        .as_ref()
+        .ok_or(DbRunnerError::MissingSchema)?;
 
-    let mut client =
-        Client::connect(conn_str, postgres::NoTls).map_err(DbRunnerError::Connect)?;
+    let mut client = Client::connect(conn_str, postgres::NoTls).map_err(DbRunnerError::Connect)?;
 
     let schema_name = isolation_schema_name(&case.meta.name, &case.dir);
     setup_isolation(&mut client, &schema_name)?;
@@ -98,10 +100,12 @@ fn run_case_inner(
 
     if let Some(data) = &case.data_sql {
         if !data.trim().is_empty() {
-            client.batch_execute(data).map_err(|source| DbRunnerError::Exec {
-                phase: "data_seed",
-                source,
-            })?;
+            client
+                .batch_execute(data)
+                .map_err(|source| DbRunnerError::Exec {
+                    phase: "data_seed",
+                    source,
+                })?;
         }
     }
 
@@ -139,23 +143,19 @@ fn teardown_isolation(client: &mut Client, schema: &str) -> Result<(), DbRunnerE
 }
 
 fn run_one_query(client: &mut Client, sql: &str) -> Result<ResultSet, DbRunnerError> {
-    let mut tx = client
-        .transaction()
-        .map_err(|source| DbRunnerError::Exec {
-            phase: "begin",
-            source,
-        })?;
+    let mut tx = client.transaction().map_err(|source| DbRunnerError::Exec {
+        phase: "begin",
+        source,
+    })?;
     let stmt = tx.prepare(sql).map_err(|source| DbRunnerError::Exec {
         phase: "prepare_query",
         source,
     })?;
     let cols = stmt.columns().len();
-    let rows = tx
-        .query(&stmt, &[])
-        .map_err(|source| DbRunnerError::Exec {
-            phase: "exec_query",
-            source,
-        })?;
+    let rows = tx.query(&stmt, &[]).map_err(|source| DbRunnerError::Exec {
+        phase: "exec_query",
+        source,
+    })?;
     let rendered = render_rows(&rows, cols);
     tx.rollback().map_err(|source| DbRunnerError::Exec {
         phase: "rollback",
@@ -190,12 +190,7 @@ fn compare(orig: &ResultSet, rew: &ResultSet, mode: CompareMode) -> DbOutcome {
                     .zip(r.iter())
                     .position(|(a, b)| a != b)
                     .unwrap_or(usize::min(o.len(), r.len()));
-                DbOutcome::mismatch(
-                    mode,
-                    orig,
-                    rew,
-                    format!("first differing row index {pos}"),
-                )
+                DbOutcome::mismatch(mode, orig, rew, format!("first differing row index {pos}"))
             }
         }
         CompareMode::Unordered => {
@@ -239,7 +234,11 @@ fn compare(orig: &ResultSet, rew: &ResultSet, mode: CompareMode) -> DbOutcome {
 
 fn render_rows(rows: &[postgres::Row], cols: usize) -> Vec<Vec<String>> {
     rows.iter()
-        .map(|row| (0..cols).map(|i| cell_to_string(row, i)).collect::<Vec<_>>())
+        .map(|row| {
+            (0..cols)
+                .map(|i| cell_to_string(row, i))
+                .collect::<Vec<_>>()
+        })
         .collect()
 }
 

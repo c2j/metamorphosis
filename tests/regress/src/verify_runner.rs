@@ -54,7 +54,10 @@ pub fn run(case: &Case) -> Result<VerifyOutcome, VerifyRunnerError> {
 }
 
 fn run_qed(case: &Case) -> Result<VerifyOutcome, VerifyRunnerError> {
-    let schema_sql = case.schema_sql.as_ref().ok_or(VerifyRunnerError::MissingSchema)?;
+    let schema_sql = case
+        .schema_sql
+        .as_ref()
+        .ok_or(VerifyRunnerError::MissingSchema)?;
     let (stmt_infos, errors) = Parser::parse_sql(schema_sql);
     if !errors.is_empty() {
         return Err(VerifyRunnerError::SchemaParse(format!("{:?}", errors)));
@@ -71,15 +74,15 @@ fn run_qed(case: &Case) -> Result<VerifyOutcome, VerifyRunnerError> {
 
     let (verdict, counterexample) = match &result.proof {
         ProofResult::Equivalent => (VerifyVerdict::Equivalent, None),
-        ProofResult::NotEquivalent { counterexample: ce } => {
-            (VerifyVerdict::NotEquivalent, ce.as_ref().map(|c| c.to_string()))
-        }
-        ProofResult::Unknown { reason } => {
-            (VerifyVerdict::Unknown, Some(reason.clone()))
-        }
-        ProofResult::Timeout { seconds } => {
-            (VerifyVerdict::Unknown, Some(format!("timeout after {seconds}s")))
-        }
+        ProofResult::NotEquivalent { counterexample: ce } => (
+            VerifyVerdict::NotEquivalent,
+            ce.as_ref().map(|c| c.to_string()),
+        ),
+        ProofResult::Unknown { reason } => (VerifyVerdict::Unknown, Some(reason.clone())),
+        ProofResult::Timeout { seconds } => (
+            VerifyVerdict::Unknown,
+            Some(format!("timeout after {seconds}s")),
+        ),
         _ => (VerifyVerdict::Unknown, Some(format!("{:?}", result.proof))),
     };
 
@@ -92,7 +95,10 @@ fn run_qed(case: &Case) -> Result<VerifyOutcome, VerifyRunnerError> {
 }
 
 fn run_verieql(case: &Case) -> Result<VerifyOutcome, VerifyRunnerError> {
-    let schema_sql = case.schema_sql.as_ref().ok_or(VerifyRunnerError::MissingSchema)?;
+    let schema_sql = case
+        .schema_sql
+        .as_ref()
+        .ok_or(VerifyRunnerError::MissingSchema)?;
     let (stmt_infos, errors) = Parser::parse_sql(schema_sql);
     if !errors.is_empty() {
         return Err(VerifyRunnerError::SchemaParse(format!("{:?}", errors)));
@@ -174,10 +180,7 @@ fn rich_to_verieql_schema(schema: &metamorphosis_qed::RichSchema) -> Vec<TableSc
 
 fn sql_type_to_verieql(ty: &str) -> ColumnType {
     let upper = ty.to_uppercase();
-    if upper.starts_with("INT")
-        || upper.starts_with("BIGINT")
-        || upper.starts_with("SMALLINT")
-    {
+    if upper.starts_with("INT") || upper.starts_with("BIGINT") || upper.starts_with("SMALLINT") {
         ColumnType::Integer
     } else if upper.starts_with("VARCHAR")
         || upper.starts_with("CHAR")
