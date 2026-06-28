@@ -58,10 +58,14 @@ fn regression_suite() {
     for entry in fs::read_dir(&root).expect("failed to read regress dir") {
         let Ok(entry) = entry else { continue };
         let Ok(ft) = entry.file_type() else { continue };
-        if !ft.is_dir() { continue }
+        if !ft.is_dir() {
+            continue;
+        }
 
         let dir_name = entry.file_name().to_str().unwrap().to_string();
-        if dir_name.starts_with('_') { continue }
+        if dir_name.starts_with('_') {
+            continue;
+        }
 
         let rule_id = dir_name.replace('_', "-");
 
@@ -150,7 +154,11 @@ fn load_variables(dir: &Path) -> Option<HashSet<String>> {
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(String::from)
         .collect();
-    if vars.is_empty() { None } else { Some(vars) }
+    if vars.is_empty() {
+        None
+    } else {
+        Some(vars)
+    }
 }
 
 #[derive(Default)]
@@ -166,7 +174,9 @@ fn discover_cases(dir: &Path) -> Vec<TestCase> {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let os_name = entry.file_name();
-            let Some(filename) = os_name.to_str() else { continue };
+            let Some(filename) = os_name.to_str() else {
+                continue;
+            };
             let content = fs::read_to_string(entry.path()).ok();
 
             if let Some(cn) = filename.strip_suffix(".input.sql") {
@@ -210,6 +220,7 @@ fn run_case(
         config,
         source_file: None,
         known_variables,
+        diagnostic_hints: None,
     };
 
     let (stmts, parse_errors) = Parser::parse_sql(&case.input);
@@ -283,7 +294,9 @@ fn verify_negative(
             ));
         }
     } else if result.changed {
-        return Err(format!("expected no rewrite but statement was changed: {output}"));
+        return Err(format!(
+            "expected no rewrite but statement was changed: {output}"
+        ));
     }
 
     if let Some(expected) = &case.expected {
@@ -362,7 +375,10 @@ fn check_fragments(output: &str, expected: &str) -> Result<(), String> {
 }
 
 fn normalize(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 fn check_full(output: &str, full: &str) -> Result<(), String> {

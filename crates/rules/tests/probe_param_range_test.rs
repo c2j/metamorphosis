@@ -18,6 +18,7 @@ fn test_rewrite_with_vars(
         config: &config,
         source_file: None,
         known_variables: Some(&known_variables),
+        diagnostic_hints: None,
     };
     let (stmts, _errors) = Parser::parse_sql(sql);
     let statements: Vec<Statement> = stmts.into_iter().map(|si| si.statement).collect();

@@ -13,6 +13,7 @@ fn test_rewrite(sql: &str) -> (Vec<Statement>, Vec<Suggestion>) {
         config: &config,
         source_file: None,
         known_variables: None,
+        diagnostic_hints: None,
     };
     let (stmts, _errors) = Parser::parse_sql(sql);
     let statements: Vec<Statement> = stmts.into_iter().map(|si| si.statement).collect();

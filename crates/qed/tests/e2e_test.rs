@@ -145,6 +145,7 @@ fn test_eliminate_select_star_pipeline() {
         config: &config,
         source_file: None,
         known_variables: None,
+        diagnostic_hints: None,
     };
 
     assert!(

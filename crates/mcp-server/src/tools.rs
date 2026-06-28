@@ -282,6 +282,7 @@ pub fn rewrite_sql(params: crate::types::SqlParams) -> Result<RewriteResponse, S
         config: &config,
         source_file: None,
         known_variables: None,
+        diagnostic_hints: None,
     };
 
     let result = engine.rewrite(&ctx, stmts);
@@ -336,6 +337,7 @@ pub fn suggest_probes(params: crate::types::SqlParams) -> Result<SuggestResponse
         config: &config,
         source_file: None,
         known_variables: None,
+        diagnostic_hints: None,
     };
 
     let result = engine.rewrite(&ctx, stmts);
