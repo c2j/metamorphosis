@@ -1,0 +1,1 @@
+SELECT dept, count(1) AS cnt FROM employees GROUP BY dept ORDER BY cnt DESC LIMIT 10

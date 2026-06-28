@@ -1,0 +1,4 @@
+-- NOT IN (SELECT ...) replaced by LEFT JOIN + IS NULL
+LEFT JOIN
+IS NULL
+!NOT IN (SELECT

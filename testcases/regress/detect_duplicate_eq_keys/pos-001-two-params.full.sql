@@ -1,0 +1,1 @@
+SELECT account_id, status, count(1) AS cnt FROM orders GROUP BY account_id, status HAVING count(1) > 1 ORDER BY cnt DESC LIMIT 10

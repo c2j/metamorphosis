@@ -9,3 +9,6 @@ license.workspace = true
 metamorphosis-core = { path = "../core" }
 ogsql-parser.workspace = true
 tracing = "0.1"
+
+[dev-dependencies]
+serde_json = "1"

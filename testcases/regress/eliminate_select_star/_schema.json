@@ -1,0 +1,1 @@
+{"users": {"id": "integer", "name": "varchar", "email": "varchar"}, "orders": {"order_id": "integer", "user_id": "integer", "total": "numeric", "status": "varchar"}}

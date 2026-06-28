@@ -1,0 +1,1 @@
+SELECT u.status, count(1) AS cnt FROM orders AS o INNER JOIN users AS u ON o.user_id = u.id WHERE o.amount > 100 GROUP BY u.status ORDER BY cnt DESC LIMIT 10

@@ -1,0 +1,1 @@
+SELECT * FROM orders AS o INNER JOIN users AS u ON u.id = o.user_id

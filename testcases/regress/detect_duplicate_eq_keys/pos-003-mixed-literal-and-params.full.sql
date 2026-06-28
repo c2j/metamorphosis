@@ -1,0 +1,1 @@
+SELECT status, region, count(1) AS cnt FROM t WHERE type = '4' GROUP BY status, region HAVING count(1) > 1 ORDER BY cnt DESC LIMIT 10

@@ -1,0 +1,1 @@
+SELECT MAX(col) FROM t

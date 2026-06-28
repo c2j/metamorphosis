@@ -1,0 +1,1 @@
+SELECT id, name FROM t WHERE status = 'active' UNION ALL SELECT id, name FROM t WHERE status = 'pending'

@@ -1,0 +1,8 @@
+# Known stored-procedure variable names for eq_analyzer parameter detection
+v_id
+v_user_id
+v_status
+v_region
+v_a
+v_b
+v_c

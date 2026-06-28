@@ -1,0 +1,1 @@
+SELECT min(status) AS status_min, max(status) AS status_max, count(DISTINCT status) AS status_distinct, count(1) AS total FROM t WHERE category = 'A'

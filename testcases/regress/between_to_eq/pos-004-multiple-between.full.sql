@@ -1,0 +1,1 @@
+SELECT * FROM t WHERE col1 = 5 AND col2 = 10

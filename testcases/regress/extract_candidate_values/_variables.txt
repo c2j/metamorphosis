@@ -1,0 +1,5 @@
+# Known stored-procedure variable names for eq_analyzer parameter detection
+p_status
+p_ts
+p_order_id
+v_status

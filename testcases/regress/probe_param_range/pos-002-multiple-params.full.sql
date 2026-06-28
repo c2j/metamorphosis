@@ -1,0 +1,1 @@
+SELECT min(status) AS status_min, max(status) AS status_max, count(DISTINCT status) AS status_distinct, min(type) AS type_min, max(type) AS type_max, count(DISTINCT type) AS type_distinct, count(1) AS total FROM orders

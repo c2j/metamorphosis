@@ -1,0 +1,1 @@
+SELECT * FROM orders AS o WHERE EXISTS (SELECT 1 FROM users AS u INNER JOIN addresses AS a ON u.id = a.user_id WHERE u.id = o.user_id)

@@ -1,0 +1,4 @@
+-- This Manual rule produces a RewriteAction::Suggest (not Generate/Replace).
+-- The harness's format_output filters out Suggest actions, so the formatted
+-- output is empty. Verification relies on the harness checking that
+-- result.suggestions is non-empty for positive cases.

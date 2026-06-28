@@ -1,0 +1,1 @@
+SELECT a, b, c, count(1) AS cnt FROM t GROUP BY a, b, c HAVING count(1) > 1 ORDER BY cnt DESC LIMIT 10

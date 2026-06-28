@@ -580,6 +580,7 @@ version = "0.1.29"
 dependencies = [
  "metamorphosis-core",
  "ogsql-parser",
+ "serde_json",
  "tracing",
 ]
 

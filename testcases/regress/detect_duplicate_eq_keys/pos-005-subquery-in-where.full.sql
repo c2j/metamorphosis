@@ -1,0 +1,1 @@
+SELECT col_a, col_b, count(1) AS cnt FROM t2 GROUP BY col_a, col_b HAVING count(1) > 1 ORDER BY cnt DESC LIMIT 10

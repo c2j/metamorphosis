@@ -1,0 +1,2 @@
+SELECT count(1) AS total, count(c.bid) AS matched FROM a INNER JOIN b ON a.id = b.aid LEFT JOIN c ON b.id = c.bid
+SELECT count(1) AS total, count(b.aid) AS matched FROM a LEFT JOIN b ON a.id = b.aid

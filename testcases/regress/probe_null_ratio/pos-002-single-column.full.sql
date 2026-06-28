@@ -1,0 +1,1 @@
+SELECT count(1) AS total, count(status) AS status_non_null FROM t
