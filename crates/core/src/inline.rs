@@ -12,7 +12,7 @@ mod inline_walker;
 use inline_walker::{
     inline_delete_mut, inline_insert_mut, inline_merge_mut, inline_select_mut, inline_update_mut,
 };
-use ogsql_parser::ast::{Expr, Literal, Statement};
+use ogsql_parser::ast::{DataType, Expr, Ident, Literal, Statement};
 use std::collections::{HashMap, HashSet};
 
 /// A parameter value mapped to a SQL literal type.
@@ -29,6 +29,17 @@ pub enum InlineValue {
     Boolean(bool),
     /// SQL `NULL`.
     Null,
+    /// SQL typed literal: `<value>::<type>` (e.g. `'20260101'::date`, `42::int`).
+    ///
+    /// The base `value` is inferred normally from the text before `::`; the
+    /// `type_name` is preserved verbatim (including any precision/length such
+    /// as `numeric(10,2)`).
+    Cast {
+        /// The base literal value (left-hand side of `::`).
+        value: Box<InlineValue>,
+        /// The target SQL type name (right-hand side of `::`), e.g. `date`.
+        type_name: String,
+    },
 }
 
 impl InlineValue {
@@ -42,6 +53,10 @@ impl InlineValue {
     /// assert_eq!(InlineValue::Boolean(true).to_sql_literal(), "TRUE");
     /// assert_eq!(InlineValue::Integer(42).to_sql_literal(), "42");
     /// assert_eq!(InlineValue::String("O'Brien".into()).to_sql_literal(), "'O''Brien'");
+    /// assert_eq!(
+    ///     InlineValue::Cast { value: Box::new(InlineValue::String("20260101".into())), type_name: "date".into() }.to_sql_literal(),
+    ///     "'20260101'::date"
+    /// );
     /// ```
     pub fn to_sql_literal(&self) -> String {
         match self {
@@ -54,6 +69,9 @@ impl InlineValue {
                 let escaped = s.replace('\'', "''");
                 format!("'{}'", escaped)
             }
+            Self::Cast { value, type_name } => {
+                format!("{}::{}", value.to_sql_literal(), type_name)
+            }
         }
     }
 
@@ -65,6 +83,21 @@ impl InlineValue {
             Self::Integer(n) => Expr::Literal(Literal::Integer(*n)),
             Self::Float(s) => Expr::Literal(Literal::Float(s.clone())),
             Self::String(s) => Expr::Literal(Literal::String(s.clone())),
+            Self::Cast { value, type_name } => Expr::TypeCast {
+                expr: Box::new(value.to_expr()),
+                // Use `DataType::Custom` with the type name as a single unquoted
+                // ident so the formatter reproduces the user's exact spelling
+                // (including precision/length such as `numeric(10,2)`).
+                type_name: DataType::Custom(
+                    vec![Ident {
+                        value: type_name.clone(),
+                        quote_style: None,
+                    }],
+                    vec![],
+                ),
+                default: None,
+                format: None,
+            },
         }
     }
 }
@@ -115,6 +148,9 @@ pub(crate) struct InlineStats {
 /// Infer the [`InlineValue`] type from a string representation.
 ///
 /// Rules (in order):
+/// - **Cast**: a `<base>::<type>` suffix (with `::` outside any quotes) →
+///   [`Cast`](InlineValue::Cast); `base` is inferred recursively (e.g.
+///   `'20260101'::date`, `42::int`, `'5'::numeric(10,2)`).
 /// - `"NULL"` (case insensitive) → [`Null`](InlineValue::Null)
 /// - `"TRUE"` / `"FALSE"` (case insensitive) → [`Boolean`](InlineValue::Boolean)
 /// - Rule 2: SQL-style single-quoted string (e.g. `"'O''Brien'"`, `"'001'"`) →
@@ -125,6 +161,16 @@ pub(crate) struct InlineStats {
 /// - Parses as `f64` → [`Float`](InlineValue::Float) (stores original string)
 /// - Otherwise → [`String`](InlineValue::String)
 pub fn infer_value(s: &str) -> InlineValue {
+    if let Some((base, type_name)) = split_cast(s) {
+        let type_name = type_name.trim();
+        if !type_name.is_empty() && looks_like_type_name(type_name) {
+            return InlineValue::Cast {
+                value: Box::new(infer_value(base)),
+                type_name: type_name.to_string(),
+            };
+        }
+    }
+
     match s.to_uppercase().as_str() {
         "NULL" => return InlineValue::Null,
         "TRUE" => return InlineValue::Boolean(true),
@@ -150,6 +196,60 @@ pub fn infer_value(s: &str) -> InlineValue {
         return InlineValue::Float(s.to_string());
     }
     InlineValue::String(s.to_string())
+}
+
+/// Split `<base>::<type>` at the first `::` outside any single-quoted region,
+/// so quoted text like `'a::b'` is not mistaken for a cast. Returns `None` if
+/// there is no top-level `::` or the base is empty.
+fn split_cast(s: &str) -> Option<(&str, &str)> {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut in_quote = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_quote {
+            if c == b'\'' {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    i += 2;
+                    continue;
+                }
+                in_quote = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'\'' {
+            in_quote = true;
+            i += 1;
+            continue;
+        }
+        if c == b':' && i + 1 < bytes.len() && bytes[i + 1] == b':' {
+            let base = &s[..i];
+            if base.is_empty() {
+                return None;
+            }
+            return Some((base, &s[i + 2..]));
+        }
+        i += 1;
+    }
+    None
+}
+
+fn looks_like_type_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    s.chars().all(|c| {
+        c.is_ascii_alphanumeric()
+            || c == '_'
+            || c == '('
+            || c == ')'
+            || c == ','
+            || c == '.'
+            || c == ' '
+    })
 }
 
 /// Replace parameters/placeholders in a parsed SQL statement with literal values.

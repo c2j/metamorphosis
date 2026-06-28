@@ -189,7 +189,14 @@ enum Command {
     Inline {
         #[arg(long)]
         file: Option<PathBuf>,
-        /// Named parameter (repeatable): --param status=active
+        /// Named parameter, type inferred (repeatable): --param status=active
+        ///
+        /// Value type is inferred (integer / float / boolean / NULL /
+        /// single-quoted string / leading-zero code). Typed casts are
+        /// supported: --param "d='20260101'::date" -> '20260101'::date.
+        /// Wrap values that contain quotes or `::` casts in DOUBLE quotes
+        /// so the shell preserves them (otherwise e.g. `'x'::date` arrives
+        /// as `x::date` and `x` is inferred as a non-string type).
         #[arg(long = "param")]
         params_named: Vec<String>,
         /// Named parameter forced to String type, bypassing type inference
@@ -197,7 +204,8 @@ enum Command {
         /// Use for single-digit values, or when infer_value misclassifies.
         #[arg(long = "param-string")]
         params_string: Vec<String>,
-        /// Positional parameter value in order (repeatable): --val active --val 1
+        /// Positional parameter value in order (repeatable): --val active --val 1.
+        /// Same type inference (and cast support) as --param.
         #[arg(long = "val")]
         params_positional: Vec<String>,
         /// Load parameters from JSON file
