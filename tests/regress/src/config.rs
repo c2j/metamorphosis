@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     pub database: DbConfig,
     #[serde(default)]
@@ -61,29 +61,25 @@ impl DbConfig {
                 return Some(url.clone());
             }
         }
-        let host = self.host.clone().or_else(|| {
-            std::env::var("PGHOST")
-                .ok()
-                .filter(|s| !s.is_empty())
-        });
-        let user = self.user.clone().or_else(|| {
-            std::env::var("PGUSER")
-                .ok()
-                .filter(|s| !s.is_empty())
-        });
-        let password = self.password.clone().or_else(|| {
-            std::env::var("PGPASSWORD")
-                .ok()
-                .filter(|s| !s.is_empty())
-        });
+        let host = self
+            .host
+            .clone()
+            .or_else(|| std::env::var("PGHOST").ok().filter(|s| !s.is_empty()));
+        let user = self
+            .user
+            .clone()
+            .or_else(|| std::env::var("PGUSER").ok().filter(|s| !s.is_empty()));
+        let password = self
+            .password
+            .clone()
+            .or_else(|| std::env::var("PGPASSWORD").ok().filter(|s| !s.is_empty()));
         let port = self
             .port
             .or_else(|| std::env::var("PGPORT").ok().and_then(|s| s.parse().ok()));
-        let database = self.database.clone().or_else(|| {
-            std::env::var("PGDATABASE")
-                .ok()
-                .filter(|s| !s.is_empty())
-        });
+        let database = self
+            .database
+            .clone()
+            .or_else(|| std::env::var("PGDATABASE").ok().filter(|s| !s.is_empty()));
 
         let (host, user) = match (host, user) {
             (Some(h), Some(u)) => (h, u),
@@ -139,15 +135,6 @@ impl Config {
                 Self::default()
             }),
             Err(_) => Self::default(),
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            database: DbConfig::default(),
-            runner: RunnerConfig::default(),
         }
     }
 }

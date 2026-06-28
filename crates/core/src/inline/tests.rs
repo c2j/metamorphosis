@@ -180,10 +180,7 @@ fn test_infer_value_cast_unquoted_shell_stripped() {
 #[test]
 fn test_infer_value_quoted_string_with_inner_colons_not_cast() {
     // `::` inside quotes must not be treated as a cast.
-    assert_eq!(
-        infer_value("'a::b'"),
-        InlineValue::String("a::b".into())
-    );
+    assert_eq!(infer_value("'a::b'"), InlineValue::String("a::b".into()));
 }
 
 #[test]

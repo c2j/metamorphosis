@@ -30,7 +30,10 @@ fn main() -> ExitCode {
     let loaded = match LoadedCases::discover(&cases_root) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("error: failed to load cases from {}: {e}", cases_root.display());
+            eprintln!(
+                "error: failed to load cases from {}: {e}",
+                cases_root.display()
+            );
             return ExitCode::from(2);
         }
     };

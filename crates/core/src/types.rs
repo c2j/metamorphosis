@@ -114,3 +114,23 @@ pub enum RuleCategory {
     Semantic,
     Safety,
 }
+
+/// Diagnostic hint from og explain-analyzer, used to inform targeted rewrites.
+///
+/// When [`RewriteContext::diagnostic_hints`](crate::context::RewriteContext::diagnostic_hints)
+/// is non-empty, rules may choose to trust the diagnostic result and skip or augment
+/// their own pattern detection logic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct DiagnosticHint {
+    /// Source diagnostic rule ID (e.g. "SUBQ-001", "TYPE-001").
+    pub rule_id: String,
+    /// Associated table name extracted from the execution plan.
+    pub table: Option<String>,
+    /// Associated column names.
+    pub columns: Vec<String>,
+    /// Severity level: "critical", "warning", or "info".
+    pub severity: String,
+    /// Human-readable diagnostic detail text.
+    pub detail: String,
+}

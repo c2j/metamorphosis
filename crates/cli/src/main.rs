@@ -631,6 +631,7 @@ fn run_rewrite_from_procedure(
         config: &config,
         source_file: Some(file.to_str().unwrap_or("unknown")),
         known_variables: known_variables.as_ref(),
+        diagnostic_hints: None,
     };
 
     let items = &analysis.extracted_sql;
@@ -707,6 +708,7 @@ fn run_rewrite_sql(
         config: &config,
         source_file: Some(source_label),
         known_variables: known_variables.as_ref(),
+        diagnostic_hints: None,
     };
 
     let parse_output = Parser::parse_sql_with_options(
@@ -806,6 +808,7 @@ fn run_rewrite_csv_file(
         config: &config,
         source_file: Some(file.to_str().unwrap_or("unknown")),
         known_variables: known_variables.as_ref(),
+        diagnostic_hints: None,
     };
 
     let source_file_str = file.to_str().unwrap_or("unknown");
@@ -1016,6 +1019,7 @@ fn run_suggest_from_procedure(
         config: &config,
         source_file: Some(file.to_str().unwrap_or("unknown")),
         known_variables: known_variables.as_ref(),
+        diagnostic_hints: None,
     };
 
     let items = &analysis.extracted_sql;
@@ -1259,6 +1263,7 @@ fn run_suggest_sql(
         config: &config,
         source_file: Some(source_label),
         known_variables: known_variables.as_ref(),
+        diagnostic_hints: None,
     };
 
     let parse_output = Parser::parse_sql_with_options(
@@ -1397,6 +1402,7 @@ fn run_suggest_csv_file(
         config: &config,
         source_file: Some(file.to_str().unwrap_or("unknown")),
         known_variables: known_variables.as_ref(),
+        diagnostic_hints: None,
     };
 
     let source_file_str = file.to_str().unwrap_or("unknown");

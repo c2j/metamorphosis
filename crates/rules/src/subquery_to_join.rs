@@ -59,7 +59,18 @@ impl RewriteRule for SubqueryToJoin {
         SafetyLevel::Conditional
     }
 
-    fn matches(&self, _ctx: &RewriteContext, stmt: &Statement) -> MatchResult {
+    fn matches(&self, ctx: &RewriteContext, stmt: &Statement) -> MatchResult {
+        // Log diagnostic hint presence if available.
+        // Pattern detection still runs unconditionally to locate the subquery position;
+        // hint consumption (skip/augment detection) is a follow-up milestone.
+        let has_diagnostic = ctx
+            .diagnostic_hints
+            .map(|hints| hints.iter().any(|h| h.rule_id == "SUBQ-001"))
+            .unwrap_or(false);
+        if has_diagnostic {
+            debug!("SUBQ-001 diagnostic hint present (not yet consumed)");
+        }
+
         let select = match stmt {
             Statement::Select(s) => &s.node,
             _ => {

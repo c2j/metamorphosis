@@ -25,6 +25,7 @@ fn test_rewrite(sql: &str, schema: &SchemaMap) -> (Vec<Statement>, Vec<Suggestio
         config: &config,
         source_file: None,
         known_variables: None,
+        diagnostic_hints: None,
     };
 
     let (stmts, _errors) = Parser::parse_sql(sql);
@@ -76,6 +77,7 @@ fn test_no_schema_no_match() {
         config: &config,
         source_file: None,
         known_variables: None,
+        diagnostic_hints: None,
     };
 
     let (stmts, _errors) = Parser::parse_sql("SELECT * FROM users");
