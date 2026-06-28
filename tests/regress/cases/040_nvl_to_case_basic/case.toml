@@ -1,0 +1,12 @@
+name = "nvl_to_case_basic"
+description = "正例：NVL(name, 'unknown') 等价于 CASE WHEN name IS NULL THEN 'unknown' ELSE name END（Qed 不支持 NVL 函数翻译，用 VeriEQL 引擎）"
+rule = "nvl-to-case"
+
+[verify]
+enabled = true
+engine = "verieql"
+bound = 3
+
+[db]
+enabled = true
+compare = "unordered"

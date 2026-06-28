@@ -1,0 +1,13 @@
+name = "subquery_to_join_lost_condition"
+description = "反例：EXISTS 改 INNER JOIN 时丢掉了子查询内的 status='active' 条件，inactive 用户订单会被错误保留，Qed 去相关必须判 NotEquivalent"
+rule = "subquery-to-join"
+
+[verify]
+enabled = true
+engine = "qed"
+expect = "not-equivalent"
+
+[db]
+enabled = true
+compare = "unordered"
+expect = "mismatch"

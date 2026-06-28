@@ -1,0 +1,11 @@
+name = "union_to_union_all_disjoint_pk"
+description = "正例：UNION 改 UNION ALL，当两侧 WHERE 用 PK 不同值筛选时结果集必不相交，两查询等价（union-to-union-all 规则的安全重写）"
+rule = "union-to-union-all"
+
+[verify]
+enabled = true
+engine = "qed"
+
+[db]
+enabled = true
+compare = "unordered"

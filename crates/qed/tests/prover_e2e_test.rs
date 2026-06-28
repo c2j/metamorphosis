@@ -314,3 +314,150 @@ fn test_not_in_to_join_is_provable() {
         Err(e) => panic!("Prover failed: {e}"),
     }
 }
+
+// ── Decorrelation E2E: EXISTS / IN → Join equivalence ───────────────────
+
+fn orders_users_ddl() -> &'static str {
+    "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER, amount INTEGER); \
+     CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100), status VARCHAR(20));"
+}
+
+/// EXISTS with correlation must be Equivalent to explicit INNER JOIN (decorrelation path).
+#[test]
+fn test_correlated_exists_decorrelation_equivalent() {
+    let ddl = parse_ddl(orders_users_ddl());
+    let schema = extract_rich_schema(&ddl);
+
+    let original = parse_single(
+        "SELECT o.order_id FROM orders o \
+         WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = o.user_id)",
+    );
+    let rewritten = parse_single(
+        "SELECT DISTINCT o.order_id FROM orders o \
+         INNER JOIN users u ON u.id = o.user_id",
+    );
+
+    let result = verify_rewrite(
+        "exists-decorrelation",
+        &original,
+        &rewritten,
+        &schema,
+        &prover_config(),
+    );
+
+    match result {
+        Ok(vr) => assert!(
+            matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
+            "Expected Equivalent, got: {:?}",
+            vr.proof
+        ),
+        Err(e) => panic!("Prover failed: {e}"),
+    }
+}
+
+/// EXISTS with extra non-correlation filter must be NotEquivalent to a JOIN that drops it.
+#[test]
+fn test_correlated_exists_wrong_extra_condition_not_equivalent() {
+    let ddl = parse_ddl(orders_users_ddl());
+    let schema = extract_rich_schema(&ddl);
+
+    let original = parse_single(
+        "SELECT o.order_id FROM orders o \
+         WHERE EXISTS (SELECT 1 FROM users u \
+                       WHERE u.id = o.user_id AND u.status = 'active')",
+    );
+    let rewritten = parse_single(
+        "SELECT DISTINCT o.order_id FROM orders o \
+         INNER JOIN users u ON u.id = o.user_id",
+    );
+
+    let result = verify_rewrite(
+        "exists-wrong-extra-cond",
+        &original,
+        &rewritten,
+        &schema,
+        &prover_config(),
+    );
+
+    match result {
+        Ok(vr) => assert!(
+            matches!(
+                vr.proof,
+                metamorphosis_qed::prover::ProofResult::NotEquivalent { .. }
+            ),
+            "Expected NotEquivalent, got: {:?}",
+            vr.proof
+        ),
+        Err(e) => panic!("Prover failed: {e}"),
+    }
+}
+
+/// Correlated IN (non-negated) must be Equivalent to explicit INNER JOIN.
+#[test]
+fn test_correlated_in_decorrelation_equivalent() {
+    let ddl = parse_ddl(orders_users_ddl());
+    let schema = extract_rich_schema(&ddl);
+
+    let original = parse_single(
+        "SELECT o.order_id FROM orders o \
+         WHERE o.user_id IN (SELECT u.id FROM users u WHERE u.id = o.user_id)",
+    );
+    let rewritten = parse_single(
+        "SELECT DISTINCT o.order_id FROM orders o \
+         INNER JOIN users u ON u.id = o.user_id",
+    );
+
+    let result = verify_rewrite(
+        "in-decorrelation",
+        &original,
+        &rewritten,
+        &schema,
+        &prover_config(),
+    );
+
+    match result {
+        Ok(vr) => assert!(
+            matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
+            "Expected Equivalent, got: {:?}",
+            vr.proof
+        ),
+        Err(e) => panic!("Prover failed: {e}"),
+    }
+}
+
+/// Correlated IN with extra condition must be NotEquivalent to JOIN that misses it.
+#[test]
+fn test_correlated_in_wrong_extra_condition_not_equivalent() {
+    let ddl = parse_ddl(orders_users_ddl());
+    let schema = extract_rich_schema(&ddl);
+
+    let original = parse_single(
+        "SELECT o.order_id FROM orders o \
+         WHERE o.user_id IN (SELECT u.id FROM users u \
+                             WHERE u.id = o.user_id AND u.status = 'active')",
+    );
+    let rewritten = parse_single(
+        "SELECT DISTINCT o.order_id FROM orders o \
+         INNER JOIN users u ON u.id = o.user_id",
+    );
+
+    let result = verify_rewrite(
+        "in-wrong-extra-cond",
+        &original,
+        &rewritten,
+        &schema,
+        &prover_config(),
+    );
+
+    match result {
+        Ok(vr) => assert!(
+            matches!(
+                vr.proof,
+                metamorphosis_qed::prover::ProofResult::NotEquivalent { .. }
+            ),
+            "Expected NotEquivalent, got: {:?}",
+            vr.proof
+        ),
+        Err(e) => panic!("Prover failed: {e}"),
+    }
+}

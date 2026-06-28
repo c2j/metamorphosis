@@ -98,6 +98,23 @@ impl ColumnScope {
     fn len(&self) -> usize {
         self.columns.len()
     }
+
+    fn try_resolve(&self, table_alias: Option<&str>, col_name: &str) -> Option<usize> {
+        let lower = col_name.to_lowercase();
+        let alias_lower = table_alias.map(|a| a.to_lowercase());
+        let matches: Vec<usize> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, (tbl, col))| col == &lower && alias_lower.as_deref() == tbl.as_deref())
+            .map(|(i, _)| i)
+            .collect();
+        if matches.len() == 1 {
+            Some(matches[0])
+        } else {
+            None
+        }
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -188,6 +205,116 @@ fn set_op_right(op: &SetOperation) -> &SelectStatement {
     }
 }
 
+// ── Decorrelation helpers ────────────────────────────────────────────────
+
+/// Result of extracting correlation predicates from a subquery WHERE clause.
+struct CorrelationResult {
+    pairs: Vec<(usize, usize)>,
+    residual: Option<Expr>,
+}
+
+/// Check whether a subquery is safe for decorrelation:
+/// single-table FROM, no JOIN, no GROUP BY, no HAVING, no set operations.
+fn is_safe_subquery(subquery: &SelectStatement) -> bool {
+    if subquery.from.len() != 1 {
+        return false;
+    }
+    if matches!(subquery.from[0], TableRef::Join { .. }) {
+        return false;
+    }
+    if !subquery.group_by.is_empty() || subquery.having.is_some() {
+        return false;
+    }
+    if subquery.set_operation.is_some() {
+        return false;
+    }
+    true
+}
+
+fn subquery_first_col_index(
+    subquery: &SelectStatement,
+    scope: &ColumnScope,
+) -> Option<usize> {
+    let first = subquery.targets.first()?;
+    match first {
+        SelectTarget::Expr(Expr::ColumnRef(name), _) => {
+            let (tbl, col) = split_column_ref(name);
+            scope.try_resolve(tbl, col)
+        }
+        _ => None,
+    }
+}
+
+/// Try to extract a correlation pair `(outer_col_index, inner_col_index)` from
+/// a binary `=` expression whose both sides are column references.
+fn try_extract_correlation(
+    left: &Expr,
+    right: &Expr,
+    outer: &ColumnScope,
+    inner: &ColumnScope,
+) -> Option<(usize, usize)> {
+    match (left, right) {
+        (Expr::ColumnRef(n1), Expr::ColumnRef(n2)) => {
+            let (t1, c1) = split_column_ref(n1);
+            let (t2, c2) = split_column_ref(n2);
+            if let (Some(oi), Some(ii)) = (outer.try_resolve(t1, c1), inner.try_resolve(t2, c2)) {
+                Some((oi, ii))
+            } else if let (Some(oi), Some(ii)) =
+                (outer.try_resolve(t2, c2), inner.try_resolve(t1, c1))
+            {
+                Some((oi, ii))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Walk the subquery WHERE tree and separate correlation predicates (equality
+/// between one outer-scope column and one inner-scope column) from residual
+/// predicates that apply only to the inner table.
+fn collect_correlation_preds(
+    where_clause: &Expr,
+    outer_scope: &ColumnScope,
+    inner_scope: &ColumnScope,
+) -> Result<CorrelationResult, TranslateError> {
+    match where_clause {
+        Expr::BinaryOp { op, left, right } if op.to_uppercase() == "AND" => {
+            let mut acc = collect_correlation_preds(left, outer_scope, inner_scope)?;
+            let right_res = collect_correlation_preds(right, outer_scope, inner_scope)?;
+            acc.pairs.extend(right_res.pairs);
+            acc.residual = match (acc.residual.take(), right_res.residual) {
+                (Some(e1), Some(e2)) => Some(Expr::BinaryOp {
+                    left: Box::new(e1),
+                    op: "AND".to_string(),
+                    right: Box::new(e2),
+                }),
+                (e @ Some(_), None) | (None, e @ Some(_)) => e,
+                (None, None) => None,
+            };
+            Ok(acc)
+        }
+        Expr::BinaryOp { op, left, right } if op == "=" => {
+            if let Some(pair) = try_extract_correlation(left, right, outer_scope, inner_scope) {
+                Ok(CorrelationResult {
+                    pairs: vec![pair],
+                    residual: None,
+                })
+            } else {
+                Ok(CorrelationResult {
+                    pairs: vec![],
+                    residual: Some(where_clause.clone()),
+                })
+            }
+        }
+        _ => Ok(CorrelationResult {
+            pairs: vec![],
+            residual: Some(where_clause.clone()),
+        }),
+    }
+}
+
 // ── Translator ───────────────────────────────────────────────────────────
 
 /// Translates ogsql-parser AST statements into QED relation trees.
@@ -222,10 +349,7 @@ impl<'a> AstTranslator<'a> {
         let has_agg = self.targets_have_aggregates(&select.targets);
 
         if let Some(ref wc) = select.where_clause {
-            rel = QedRelation::Filter {
-                condition: self.translate_expr(wc, &scope)?,
-                input: Box::new(rel),
-            };
+            rel = self.translate_where(wc, &scope, rel)?;
         }
 
         if !select.group_by.is_empty() || has_agg {
@@ -337,6 +461,223 @@ impl<'a> AstTranslator<'a> {
             };
         }
         Ok(rel)
+    }
+
+    /// Translate a WHERE clause, attempting to decorrelate EXISTS / IN (non-negated)
+    /// subqueries into `Distinct(Join(...))`. Falls back to a plain `Filter` when
+    /// decorrelation is not applicable.
+    fn translate_where(
+        &self,
+        where_clause: &Expr,
+        outer_scope: &ColumnScope,
+        outer_rel: QedRelation,
+    ) -> Result<QedRelation, TranslateError> {
+        match where_clause {
+            Expr::Exists(subquery) => {
+                match self.try_decorrelate_exists(subquery, outer_scope, outer_rel.clone()) {
+                    Ok(decorrelated) => Ok(decorrelated),
+                    Err(_) => Ok(QedRelation::Filter {
+                        condition: self.translate_expr(where_clause, outer_scope)?,
+                        input: Box::new(outer_rel),
+                    }),
+                }
+            }
+            Expr::InSubquery {
+                expr,
+                subquery,
+                negated: false,
+            } => {
+                match self.try_decorrelate_in(expr, subquery, outer_scope, outer_rel.clone()) {
+                    Ok(decorrelated) => Ok(decorrelated),
+                    Err(_) => Ok(QedRelation::Filter {
+                        condition: self.translate_expr(where_clause, outer_scope)?,
+                        input: Box::new(outer_rel),
+                    }),
+                }
+            }
+            Expr::BinaryOp { op, left, right } if op.to_uppercase() == "AND" => {
+                let after_left = self.translate_where(left, outer_scope, outer_rel)?;
+                self.translate_where(right, outer_scope, after_left)
+            }
+            _ => Ok(QedRelation::Filter {
+                condition: self.translate_expr(where_clause, outer_scope)?,
+                input: Box::new(outer_rel),
+            }),
+        }
+    }
+
+    /// Attempt to decorrelate an `EXISTS (subquery)` as `Distinct(Join(INNER))`.
+    ///
+    /// Returns `Err` when decorrelation is not applicable (unsafe subquery,
+    /// no correlation predicates found, etc.) so the caller can fall back to
+    /// `QedExpr::Quantified`.
+    fn try_decorrelate_exists(
+        &self,
+        subquery: &SelectStatement,
+        outer_scope: &ColumnScope,
+        outer_rel: QedRelation,
+    ) -> Result<QedRelation, TranslateError> {
+        if !is_safe_subquery(subquery) {
+            return Err(TranslateError::UnsupportedExpr(
+                "subquery too complex for decorrelation".into(),
+            ));
+        }
+        let inner_scope = self.build_scope_from(&subquery.from)?;
+        let inner_rel = self.translate_from(&subquery.from)?;
+
+        let wc = subquery
+            .where_clause
+            .as_ref()
+            .ok_or_else(|| TranslateError::UnsupportedExpr("EXISTS without WHERE".into()))?;
+        let corr = collect_correlation_preds(wc, outer_scope, &inner_scope)?;
+        if corr.pairs.is_empty() {
+            return Err(TranslateError::UnsupportedExpr(
+                "no correlation predicates found".into(),
+            ));
+        }
+
+        let outer_arity = outer_scope.len();
+        let conditions: Vec<QedExpr> = corr
+            .pairs
+            .iter()
+            .map(|(oi, ii)| QedExpr::BinOp {
+                op: "eq".to_string(),
+                left: Box::new(QedExpr::ColumnRef { index: *oi }),
+                right: Box::new(QedExpr::ColumnRef { index: outer_arity + *ii }),
+            })
+            .collect();
+
+        let mut inner = inner_rel;
+        if let Some(residual) = corr.residual {
+            let residual_expr = self.translate_expr(&residual, &inner_scope)?;
+            inner = QedRelation::Filter {
+                condition: residual_expr,
+                input: Box::new(inner),
+            };
+        }
+
+        let join_condition = if conditions.len() == 1 {
+            Some(conditions.into_iter().next().expect("non-empty"))
+        } else {
+            Some(
+                conditions
+                    .into_iter()
+                    .reduce(|a, b| QedExpr::BinOp {
+                        op: "and".to_string(),
+                        left: Box::new(a),
+                        right: Box::new(b),
+                    })
+                    .expect("non-empty"),
+            )
+        };
+
+        let join = QedRelation::Join {
+            left: Box::new(outer_rel),
+            right: Box::new(inner),
+            condition: join_condition,
+        };
+        Ok(QedRelation::Distinct {
+            input: Box::new(join),
+        })
+    }
+
+    /// Attempt to decorrelate an `IN (subquery)` (non-negated) as `Distinct(Join(INNER))`.
+    ///
+    /// Returns `Err` when decorrelation is not applicable so the caller can fall back
+    /// to `QedExpr::Quantified`.
+    fn try_decorrelate_in(
+        &self,
+        outer_expr: &Expr,
+        subquery: &SelectStatement,
+        outer_scope: &ColumnScope,
+        outer_rel: QedRelation,
+    ) -> Result<QedRelation, TranslateError> {
+        if !is_safe_subquery(subquery) {
+            return Err(TranslateError::UnsupportedExpr(
+                "subquery too complex for decorrelation".into(),
+            ));
+        }
+        let inner_scope = self.build_scope_from(&subquery.from)?;
+        let inner_rel = self.translate_from(&subquery.from)?;
+
+        let outer_arity = outer_scope.len();
+
+        // Resolve the subquery's first target column in the inner scope.
+        let inner_first_col =
+            subquery_first_col_index(subquery, &inner_scope).ok_or_else(|| {
+                TranslateError::UnsupportedExpr(
+                    "IN subquery first target is not a simple column".into(),
+                )
+            })?;
+
+        // Translate the outer expression within the outer scope.
+        let outer_qed = self.translate_expr(outer_expr, outer_scope)?;
+
+        // Collect correlation predicates (same as EXISTS).
+        let wc = subquery
+            .where_clause
+            .as_ref()
+            .ok_or_else(|| TranslateError::UnsupportedExpr("IN without WHERE".into()))?;
+        let corr = collect_correlation_preds(wc, outer_scope, &inner_scope)?;
+        if corr.pairs.is_empty() {
+            return Err(TranslateError::UnsupportedExpr(
+                "no correlation predicates found".into(),
+            ));
+        }
+
+        let mut conditions: Vec<QedExpr> = corr
+            .pairs
+            .iter()
+            .map(|(oi, ii)| QedExpr::BinOp {
+                op: "eq".to_string(),
+                left: Box::new(QedExpr::ColumnRef { index: *oi }),
+                right: Box::new(QedExpr::ColumnRef {
+                    index: outer_arity + *ii,
+                }),
+            })
+            .collect();
+
+        // Add the IN expression pairing: outer_expr = subquery_first_col
+        conditions.push(QedExpr::BinOp {
+            op: "eq".to_string(),
+            left: Box::new(outer_qed),
+            right: Box::new(QedExpr::ColumnRef {
+                index: outer_arity + inner_first_col,
+            }),
+        });
+
+        let mut inner = inner_rel;
+        if let Some(residual) = corr.residual {
+            let residual_expr = self.translate_expr(&residual, &inner_scope)?;
+            inner = QedRelation::Filter {
+                condition: residual_expr,
+                input: Box::new(inner),
+            };
+        }
+
+        let join_condition = if conditions.len() == 1 {
+            Some(conditions.into_iter().next().expect("non-empty"))
+        } else {
+            Some(
+                conditions
+                    .into_iter()
+                    .reduce(|a, b| QedExpr::BinOp {
+                        op: "and".to_string(),
+                        left: Box::new(a),
+                        right: Box::new(b),
+                    })
+                    .expect("non-empty"),
+            )
+        };
+
+        let join = QedRelation::Join {
+            left: Box::new(outer_rel),
+            right: Box::new(inner),
+            condition: join_condition,
+        };
+        Ok(QedRelation::Distinct {
+            input: Box::new(join),
+        })
     }
 
     fn translate_from(&self, from: &[TableRef]) -> Result<QedRelation, TranslateError> {
@@ -762,6 +1103,21 @@ impl<'a> AstTranslator<'a> {
             Expr::Exists(subquery) => Ok(QedExpr::Quantified {
                 cmp: "eq".to_string(),
                 quantifier: "some".to_string(),
+                subquery: Box::new(self.translate_select(subquery)?),
+            }),
+            Expr::InSubquery {
+                expr: _,
+                subquery,
+                negated,
+            } => Ok(QedExpr::Quantified {
+                cmp: "eq".to_string(),
+                quantifier: {
+                    if *negated {
+                        "none".to_string()
+                    } else {
+                        "some".to_string()
+                    }
+                },
                 subquery: Box::new(self.translate_select(subquery)?),
             }),
             Expr::Subquery(subquery) => {

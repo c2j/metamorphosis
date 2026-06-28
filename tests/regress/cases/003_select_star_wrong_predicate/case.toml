@@ -1,0 +1,13 @@
+name = "select_star_wrong_predicate"
+description = "反例：重写时偷偷把 WHERE id=1 改成 id=2，verify 必须判 NotEquivalent 并给出反例，DB 应返回不同行（守护规则不要篡改谓词）"
+rule = "eliminate-select-star"
+
+[verify]
+enabled = true
+engine = "qed"
+expect = "not-equivalent"
+
+[db]
+enabled = true
+compare = "unordered"
+expect = "mismatch"

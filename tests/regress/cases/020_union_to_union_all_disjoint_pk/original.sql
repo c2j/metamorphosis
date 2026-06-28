@@ -1,0 +1,1 @@
+SELECT id FROM a WHERE id = 1 UNION SELECT id FROM a WHERE id = 2;

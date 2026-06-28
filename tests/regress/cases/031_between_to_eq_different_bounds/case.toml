@@ -1,0 +1,13 @@
+name = "between_to_eq_different_bounds"
+description = "反例：BETWEEN 100 AND 200 上下界不同，不应被错误改写为 = 100，verify 必须判 NotEquivalent"
+rule = "between-to-eq"
+
+[verify]
+enabled = true
+engine = "qed"
+expect = "not-equivalent"
+
+[db]
+enabled = true
+compare = "unordered"
+expect = "mismatch"

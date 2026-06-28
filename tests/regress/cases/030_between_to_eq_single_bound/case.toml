@@ -1,0 +1,11 @@
+name = "between_to_eq_single_bound"
+description = "正例：col BETWEEN v AND v 区间退化为单点，等价于 col = v（between-to-eq 规则的安全重写）"
+rule = "between-to-eq"
+
+[verify]
+enabled = true
+engine = "qed"
+
+[db]
+enabled = true
+compare = "unordered"

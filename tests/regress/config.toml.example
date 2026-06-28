@@ -1,0 +1,20 @@
+# Copy this file to `config.toml` and fill in real values.
+# `config.toml` is gitignored to avoid leaking credentials.
+#
+# Connection precedence (highest → lowest):
+#   1. DATABASE_URL environment variable
+#   2. [database] url field below
+#   3. Individual [database] host/user/port/password/database fields
+#      (PGHOST / PGUSER / PGPASSWORD / PGPORT / PGDATABASE env vars also fall through here)
+
+[database]
+# url = "postgres://gaussdb:my_password@localhost:5432/postgres"
+host = "localhost"
+port = 5432
+user = "gaussdb"
+password = "replace_me"
+database = "postgres"
+
+[runner]
+cases_dir = "cases"
+fail_fast = false

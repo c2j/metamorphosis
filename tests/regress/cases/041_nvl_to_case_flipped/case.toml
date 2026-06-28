@@ -1,0 +1,13 @@
+name = "nvl_to_case_flipped"
+description = "反例：NVL 改 CASE 时把 THEN/ELSE 分支放反了，NULL 走原列、非 NULL 走默认值，语义颠倒，必须判 NotEquivalent"
+rule = "nvl-to-case"
+
+[verify]
+enabled = true
+engine = "qed"
+expect = "not-equivalent"
+
+[db]
+enabled = true
+compare = "unordered"
+expect = "mismatch"

@@ -1,0 +1,12 @@
+name = "select_star_expansion"
+description = "正例：SELECT * 展开为完整列名后结果集应与原查询完全一致（eliminate-select-star 规则的安全重写）"
+rule = "eliminate-select-star"
+
+[verify]
+enabled = true
+engine = "qed"
+bound = 2
+
+[db]
+enabled = true
+compare = "unordered"

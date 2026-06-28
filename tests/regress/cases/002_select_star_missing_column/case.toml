@@ -1,0 +1,13 @@
+name = "select_star_missing_column"
+description = "反例：重写 SELECT * 时漏掉 email 列，verify 必须判 NotEquivalent，DB 结果集列数应不一致（守护规则不要错误地丢列）"
+rule = "eliminate-select-star"
+
+[verify]
+enabled = true
+engine = "qed"
+expect = "not-equivalent"
+
+[db]
+enabled = true
+compare = "unordered"
+expect = "mismatch"
