@@ -1,0 +1,11 @@
+name = "union_to_union_all_overlap"
+description = "反例：两侧 WHERE 条件有重叠（id=1 与 id<=2），UNION ALL 会保留重复行而 UNION 会去重，DB 结果集行数必须不一致（Qed/VeriEQL 均不区分 UNION/UNION ALL 的 bag 语义，仅 DB 验证）"
+rule = "union-to-union-all"
+
+[verify]
+enabled = false
+
+[db]
+enabled = true
+compare = "unordered"
+expect = "mismatch"

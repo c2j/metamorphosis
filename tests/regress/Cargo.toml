@@ -1,0 +1,29 @@
+[package]
+name = "metamorphosis-regress"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+description = "Regression harness with double verification (formal prove + DB execute) for metamorphosis rewrites"
+publish = false
+
+[lib]
+name = "metamorphosis_regress"
+path = "src/lib.rs"
+
+[[bin]]
+name = "metamorphosis-regress"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# openGauss speaks postgres wire protocol — sync client is sufficient for the harness
+postgres = "0.19"
+ogsql-parser.workspace = true
+metamorphosis-qed = { path = "../../crates/qed" }
+metamorphosis-verieql = { path = "../../crates/verieql" }

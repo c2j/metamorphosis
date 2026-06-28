@@ -1,0 +1,4 @@
+CREATE TABLE a (
+    id INTEGER PRIMARY KEY,
+    val VARCHAR(50)
+);

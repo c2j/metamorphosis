@@ -1,0 +1,11 @@
+name = "or_to_union_all_disjoint_pk"
+description = "正例：WHERE id=1 OR id=2 改为 UNION ALL，id 是 PK 两侧必不相交，两查询等价（or-to-union-all 规则的安全重写）"
+rule = "or-to-union-all"
+
+[verify]
+enabled = true
+engine = "qed"
+
+[db]
+enabled = true
+compare = "unordered"

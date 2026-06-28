@@ -1,0 +1,11 @@
+name = "or_to_union_all_overlap"
+description = "反例：WHERE id=1 OR id<=2 改为 UNION ALL，id=1 同时满足两侧条件会产生重复行，DB 结果集行数必须不一致（Qed/VeriEQL 均不区分 UNION ALL bag 语义，仅 DB 验证）"
+rule = "or-to-union-all"
+
+[verify]
+enabled = false
+
+[db]
+enabled = true
+compare = "unordered"
+expect = "mismatch"

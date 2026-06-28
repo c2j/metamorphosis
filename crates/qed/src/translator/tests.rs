@@ -336,3 +336,130 @@ fn test_join_no_alias() {
         _ => panic!("expected Ok(Project with Join), got: {:?}", result),
     }
 }
+
+// ── Decorrelation unit tests ────────────────────────────────────────────
+
+fn decorrelation_schema() -> RichSchema {
+    let sql = concat!(
+        "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER, amount INTEGER);",
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100), status VARCHAR(20));",
+    );
+    let (stmts, _) = ogsql_parser::Parser::parse_sql(sql);
+    let stmts: Vec<_> = stmts.into_iter().map(|si| si.statement).collect();
+    extract_rich_schema(&stmts)
+}
+
+/// Correlated EXISTS must produce a Distinct(Join) rather than Filter(Quantified).
+#[test]
+fn test_correlated_exists_decorrelated_to_distinct_join() {
+    let schema = decorrelation_schema();
+    let rel = translate_sql(
+        "SELECT o.order_id FROM orders o \
+         WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = o.user_id)",
+        &schema,
+    )
+    .unwrap();
+
+    // Walk: Project → Distinct → Join(Scan(orders), Scan(users))
+    match &rel {
+        QedRelation::Project { input, .. } => match input.as_ref() {
+            QedRelation::Distinct { input: inner } => match inner.as_ref() {
+                QedRelation::Join {
+                    left,
+                    right,
+                    condition,
+                } => {
+                    assert!(condition.is_some(), "Join must have ON condition");
+                    assert!(
+                        matches!(left.as_ref(), QedRelation::Scan { table, .. } if table == "orders"),
+                        "left should be Scan(orders)"
+                    );
+                    assert!(
+                        matches!(right.as_ref(), QedRelation::Scan { table, .. } if table == "users"),
+                        "right should be Scan(users)"
+                    );
+                }
+                _ => panic!("expected Join inside Distinct, got: {inner:?}"),
+            },
+            _ => panic!("expected Distinct, got: {input:?}"),
+        },
+        _ => panic!("expected Project at root, got: {rel:?}"),
+    }
+}
+
+/// Non-correlated EXISTS must fall back to Filter(Quantified) (no degradation).
+#[test]
+fn test_non_correlated_exists_falls_back_to_quantified() {
+    let schema = decorrelation_schema();
+    let rel = translate_sql(
+        "SELECT user_id FROM orders \
+         WHERE EXISTS (SELECT 1 FROM users WHERE users.status = 'active')",
+        &schema,
+    )
+    .unwrap();
+
+    match &rel {
+        QedRelation::Project { input, .. } => match input.as_ref() {
+            QedRelation::Filter { condition, .. } => {
+                assert!(
+                    matches!(condition, QedExpr::Quantified { .. }),
+                    "non-correlated EXISTS should stay as Quantified, got: {condition:?}"
+                );
+            }
+            _ => panic!("expected Filter with Quantified, got: {input:?}"),
+        },
+        _ => panic!("expected Project at root, got: {rel:?}"),
+    }
+}
+
+/// EXISTS with extra non-correlation condition preserves it as Filter on inner.
+#[test]
+fn test_exists_with_residual_preserves_filter() {
+    let schema = decorrelation_schema();
+    let rel = translate_sql(
+        "SELECT o.order_id FROM orders o \
+         WHERE EXISTS (SELECT 1 FROM users u \
+                       WHERE u.id = o.user_id AND u.status = 'active')",
+        &schema,
+    )
+    .unwrap();
+
+    match &rel {
+        QedRelation::Project { input, .. } => match input.as_ref() {
+            QedRelation::Distinct { input: inner } => match inner.as_ref() {
+                QedRelation::Join { right, .. } => {
+                    assert!(
+                        matches!(right.as_ref(), QedRelation::Filter { .. }),
+                        "inner relation should have residual Filter, got: {right:?}"
+                    );
+                }
+                _ => panic!("expected Join, got: {inner:?}"),
+            },
+            _ => panic!("expected Distinct, got: {input:?}"),
+        },
+        _ => panic!("expected Project, got: {rel:?}"),
+    }
+}
+
+/// Correlated IN (non-negated) produces same Distinct(Join) structure as EXISTS.
+#[test]
+fn test_correlated_in_decorrelated_to_distinct_join() {
+    let schema = decorrelation_schema();
+    let rel = translate_sql(
+        "SELECT o.order_id FROM orders o \
+         WHERE o.user_id IN (SELECT u.id FROM users u WHERE u.id = o.user_id)",
+        &schema,
+    )
+    .unwrap();
+
+    match &rel {
+        QedRelation::Project { input, .. } => match input.as_ref() {
+            QedRelation::Distinct { input: inner } => match inner.as_ref() {
+                QedRelation::Join { .. } => { /* pass */ }
+                _ => panic!("expected Join, got: {inner:?}"),
+            },
+            _ => panic!("expected Distinct, got: {input:?}"),
+        },
+        _ => panic!("expected Project, got: {rel:?}"),
+    }
+}

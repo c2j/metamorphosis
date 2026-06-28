@@ -1,0 +1,11 @@
+name = "subquery_to_join_exists"
+description = "正例：WHERE EXISTS 相关子查询改写为 INNER JOIN，当 users.id 是 PK 时两查询等价（subquery-to-join 规则；Qed 去相关验证）"
+rule = "subquery-to-join"
+
+[verify]
+enabled = true
+engine = "qed"
+
+[db]
+enabled = true
+compare = "unordered"
