@@ -231,10 +231,7 @@ fn is_safe_subquery(subquery: &SelectStatement) -> bool {
     true
 }
 
-fn subquery_first_col_index(
-    subquery: &SelectStatement,
-    scope: &ColumnScope,
-) -> Option<usize> {
+fn subquery_first_col_index(subquery: &SelectStatement, scope: &ColumnScope) -> Option<usize> {
     let first = subquery.targets.first()?;
     match first {
         SelectTarget::Expr(Expr::ColumnRef(name), _) => {
@@ -486,15 +483,13 @@ impl<'a> AstTranslator<'a> {
                 expr,
                 subquery,
                 negated: false,
-            } => {
-                match self.try_decorrelate_in(expr, subquery, outer_scope, outer_rel.clone()) {
-                    Ok(decorrelated) => Ok(decorrelated),
-                    Err(_) => Ok(QedRelation::Filter {
-                        condition: self.translate_expr(where_clause, outer_scope)?,
-                        input: Box::new(outer_rel),
-                    }),
-                }
-            }
+            } => match self.try_decorrelate_in(expr, subquery, outer_scope, outer_rel.clone()) {
+                Ok(decorrelated) => Ok(decorrelated),
+                Err(_) => Ok(QedRelation::Filter {
+                    condition: self.translate_expr(where_clause, outer_scope)?,
+                    input: Box::new(outer_rel),
+                }),
+            },
             Expr::BinaryOp { op, left, right } if op.to_uppercase() == "AND" => {
                 let after_left = self.translate_where(left, outer_scope, outer_rel)?;
                 self.translate_where(right, outer_scope, after_left)
@@ -543,7 +538,9 @@ impl<'a> AstTranslator<'a> {
             .map(|(oi, ii)| QedExpr::BinOp {
                 op: "eq".to_string(),
                 left: Box::new(QedExpr::ColumnRef { index: *oi }),
-                right: Box::new(QedExpr::ColumnRef { index: outer_arity + *ii }),
+                right: Box::new(QedExpr::ColumnRef {
+                    index: outer_arity + *ii,
+                }),
             })
             .collect();
 
