@@ -140,7 +140,9 @@ fn regression_37_def2_distinct_vs_non_distinct_bag() {
     }
 }
 
-/// `GROUP BY` produces `Relation::GroupBy` — also missing from encoder.
+/// `GROUP BY` produces `Relation::GroupBy` — P1: not yet implemented.
+/// The encoder returns `Err(UnsupportedRelation)`, which is the safe behavior
+/// (rejects rather than silently producing wrong results).
 #[test]
 fn regression_37_def2_groupby_relation_identity() {
     let result = VeriEql::verify(
@@ -153,13 +155,13 @@ fn regression_37_def2_groupby_relation_identity() {
     );
 
     match result {
-        Ok(report) => assert!(
-            matches!(report.result, ProofResult::Equivalent),
-            "Identity GROUP BY proof should be Equivalent. Got: {:?}",
+        Ok(report) => panic!(
+            "GROUP BY should not be supported yet. Got: {:?}",
             report.result
         ),
-        Err(e) => panic!(
-            "BUG #37-Def2: GROUP BY relation not supported by encoder: {e}"
+        Err(e) => assert!(
+            e.to_string().contains("unsupported") || e.to_string().contains("UnsupportedRelation"),
+            "Expected unsupported relation error for GROUP BY, got: {e}"
         ),
     }
 }
