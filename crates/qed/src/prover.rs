@@ -102,7 +102,7 @@ pub fn run_prover(
 
     // Fallback: external qed-prover binary
     let name_map = schema_name_map.cloned().unwrap_or_default();
-    let prover_input = prover_compat::convert_input(input, &name_map);
+    let prover_input = prover_compat::convert_input(input, &name_map)?;
     let json = serde_json::to_string_pretty(&prover_input)
         .map_err(|e| ProverError::Serialization(e.to_string()))?;
 

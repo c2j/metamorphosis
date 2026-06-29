@@ -178,9 +178,9 @@ fn encode_relation(
         }
         QedRelation::Distinct { input: _ } => {
             tracing::warn!("Distinct relation cannot be soundly encoded in set-based Z3 encoding; returning error");
-            return Err(ProverError::Io(
+            Err(ProverError::Io(
                 "DISTINCT cannot be soundly encoded: set-based membership predicates do not track multiplicity".into(),
-            ));
+            ))
         }
         QedRelation::Values { rows } => encode_values(rows, output_vars),
         QedRelation::Aggregate { .. } => encode_uninterpreted("agg", output_vars),

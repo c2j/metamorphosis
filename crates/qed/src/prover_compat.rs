@@ -5,6 +5,7 @@
 //! (`[[0]]`), and tuple-style `help`/`queries` (serialized as arrays).
 
 use crate::ir::{QedAggArg, QedAggCall, QedExpr, QedInput, QedRelation, QedSchema, QedValue};
+use crate::prover::ProverError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -302,7 +303,9 @@ pub fn convert_expr(
             op: format!("{}_{}", quantifier, cmp),
             args: vec![],
             ty: ProverDataType::Boolean,
-            rel: Some(Box::new(convert_relation(subquery, &HashMap::new()))),
+            rel: convert_relation(subquery, &HashMap::new())
+                .ok()
+                .map(Box::new),
         },
     }
 }
@@ -338,7 +341,7 @@ pub fn convert_agg_call(
 pub fn convert_relation(
     rel: &QedRelation,
     schema_index: &HashMap<String, usize>,
-) -> ProverRelation {
+) -> Result<ProverRelation, ProverError> {
     convert_relation_with_types(rel, schema_index, None)
 }
 
@@ -348,24 +351,26 @@ pub fn convert_relation_with_types(
     rel: &QedRelation,
     schema_index: &HashMap<String, usize>,
     column_types: Option<&HashMap<usize, ProverDataType>>,
-) -> ProverRelation {
+) -> Result<ProverRelation, ProverError> {
     match rel {
         QedRelation::Scan { table, .. } => {
             let idx = schema_index
                 .get(table)
                 .copied()
-                .expect("convert_relation: table must have a corresponding entry in schema_index");
-            ProverRelation::Scan(VL(idx))
+                .ok_or_else(|| ProverError::Io(
+                    format!("convert_relation: table '{table}' not found in schema_index")
+                ))?;
+            Ok(ProverRelation::Scan(VL(idx)))
         }
-        QedRelation::Filter { condition, input } => ProverRelation::Filter {
+        QedRelation::Filter { condition, input } => Ok(ProverRelation::Filter {
             condition: convert_expr(condition, column_types),
             source: Box::new(convert_relation_with_types(
                 input,
                 schema_index,
                 column_types,
-            )),
-        },
-        QedRelation::Project { exprs, input } => ProverRelation::Project {
+            )?),
+        }),
+        QedRelation::Project { exprs, input } => Ok(ProverRelation::Project {
             columns: exprs
                 .iter()
                 .map(|e| convert_expr(e, column_types))
@@ -374,8 +379,8 @@ pub fn convert_relation_with_types(
                 input,
                 schema_index,
                 column_types,
-            )),
-        },
+            )?),
+        }),
         QedRelation::Join {
             left,
             right,
@@ -390,45 +395,45 @@ pub fn convert_relation_with_types(
                     rel: None,
                 },
             };
-            ProverRelation::Join {
+            Ok(ProverRelation::Join {
                 condition: cond,
                 left: Box::new(convert_relation_with_types(
                     left,
                     schema_index,
                     column_types,
-                )),
+                )?),
                 right: Box::new(convert_relation_with_types(
                     right,
                     schema_index,
                     column_types,
-                )),
+                )?),
                 kind: ProverJoinKind::Inner,
-            }
+            })
         }
-        QedRelation::Union { left, right } => ProverRelation::Union(vec![
-            convert_relation_with_types(left, schema_index, column_types),
-            convert_relation_with_types(right, schema_index, column_types),
-        ]),
-        QedRelation::Intersect { left, right } => ProverRelation::Intersect(vec![
-            convert_relation_with_types(left, schema_index, column_types),
-            convert_relation_with_types(right, schema_index, column_types),
-        ]),
-        QedRelation::Except { left, right } => ProverRelation::Except(
+        QedRelation::Union { left, right } => Ok(ProverRelation::Union(vec![
+            convert_relation_with_types(left, schema_index, column_types)?,
+            convert_relation_with_types(right, schema_index, column_types)?,
+        ])),
+        QedRelation::Intersect { left, right } => Ok(ProverRelation::Intersect(vec![
+            convert_relation_with_types(left, schema_index, column_types)?,
+            convert_relation_with_types(right, schema_index, column_types)?,
+        ])),
+        QedRelation::Except { left, right } => Ok(ProverRelation::Except(
             Box::new(convert_relation_with_types(
                 left,
                 schema_index,
                 column_types,
-            )),
+            )?),
             Box::new(convert_relation_with_types(
                 right,
                 schema_index,
                 column_types,
-            )),
-        ),
-        QedRelation::Distinct { input } => ProverRelation::Distinct(Box::new(
-            convert_relation_with_types(input, schema_index, column_types),
+            )?),
         )),
-        QedRelation::Aggregate { keys, aggs, input } => ProverRelation::Group {
+        QedRelation::Distinct { input } => Ok(ProverRelation::Distinct(Box::new(
+            convert_relation_with_types(input, schema_index, column_types)?,
+        ))),
+        QedRelation::Aggregate { keys, aggs, input } => Ok(ProverRelation::Group {
             keys: keys
                 .iter()
                 .map(|k| convert_expr(&QedExpr::ColumnRef { index: *k }, column_types))
@@ -441,17 +446,17 @@ pub fn convert_relation_with_types(
                 input,
                 schema_index,
                 column_types,
-            )),
-        },
-        QedRelation::Values { rows } => ProverRelation::Values {
+            )?),
+        }),
+        QedRelation::Values { rows } => Ok(ProverRelation::Values {
             schema: vec![],
             content: rows
                 .iter()
                 .map(|row| row.iter().map(|e| convert_expr(e, column_types)).collect())
                 .collect(),
-        },
+        }),
         QedRelation::QOp { name, args, input } => match name.to_lowercase().as_str() {
-            "sort" | "order" | "orderby" => ProverRelation::Sort {
+            "sort" | "order" | "orderby" => Ok(ProverRelation::Sort {
                 collation: vec![],
                 offset: None,
                 limit: None,
@@ -459,9 +464,9 @@ pub fn convert_relation_with_types(
                     input,
                     schema_index,
                     column_types,
-                )),
-            },
-            "limit" => ProverRelation::Sort {
+                )?),
+            }),
+            "limit" => Ok(ProverRelation::Sort {
                 collation: vec![],
                 offset: None,
                 limit: args.first().map(|a| convert_expr(a, column_types)),
@@ -469,8 +474,8 @@ pub fn convert_relation_with_types(
                     input,
                     schema_index,
                     column_types,
-                )),
-            },
+                )?),
+            }),
             _ => {
                 tracing::warn!(
                     "convert_relation: unknown QOp '{}', treating as passthrough",
@@ -502,7 +507,7 @@ pub fn convert_schema(schema: &QedSchema) -> ProverSchema {
 ///
 /// `schema_name_map` maps table names to qualified names (e.g., `"emp"` → `"PUBLIC.emp"`).
 /// Schema index is built automatically; `help` is duplicated for both queries.
-pub fn convert_input(our: &QedInput, schema_name_map: &HashMap<String, String>) -> ProverInput {
+pub fn convert_input(our: &QedInput, schema_name_map: &HashMap<String, String>) -> Result<ProverInput, ProverError> {
     let mut schema_index: HashMap<String, usize> = HashMap::with_capacity(our.schemas.len());
     let mut prover_schemas: Vec<ProverSchema> = Vec::with_capacity(our.schemas.len());
     let mut column_types: HashMap<usize, ProverDataType> = HashMap::new();
@@ -531,14 +536,14 @@ pub fn convert_input(our: &QedInput, schema_name_map: &HashMap<String, String>) 
             fields: schema.fields.clone(),
         });
     }
-    ProverInput {
+    Ok(ProverInput {
         schemas: prover_schemas,
         queries: (
-            convert_relation_with_types(&our.queries[0], &schema_index, Some(&column_types)),
-            convert_relation_with_types(&our.queries[1], &schema_index, Some(&column_types)),
+            convert_relation_with_types(&our.queries[0], &schema_index, Some(&column_types))?,
+            convert_relation_with_types(&our.queries[1], &schema_index, Some(&column_types))?,
         ),
         help: (our.help.clone(), our.help.clone()),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -584,7 +589,8 @@ mod tests {
                 fields: vec![],
             },
             &idx(),
-        );
+        )
+        .unwrap();
         assert_eq!(rel, ProverRelation::Scan(VL(0)));
     }
 
@@ -605,7 +611,8 @@ mod tests {
                 }),
             },
             &idx(),
-        );
+        )
+        .unwrap();
         assert_eq!(
             rel,
             ProverRelation::Filter {
@@ -647,7 +654,8 @@ mod tests {
                 }),
             },
             &idx(),
-        );
+        )
+        .unwrap();
         assert_eq!(
             rel,
             ProverRelation::Project {
@@ -690,7 +698,8 @@ mod tests {
                 }),
             },
             &m,
-        );
+        )
+        .unwrap();
         assert_eq!(
             rel,
             ProverRelation::Join {
@@ -730,7 +739,8 @@ mod tests {
                 }),
             },
             &idx(),
-        );
+        )
+        .unwrap();
         assert_eq!(
             rel,
             ProverRelation::Union(vec![
@@ -759,7 +769,9 @@ mod tests {
     #[test]
     fn test_convert_help_is_tuple() {
         assert_eq!(
-            convert_input(&qed(), &HashMap::new()).help,
+            convert_input(&qed(), &HashMap::new())
+                .unwrap()
+                .help,
             ("test".to_string(), "test".to_string())
         );
     }
@@ -780,7 +792,8 @@ mod tests {
                 }),
             },
             &idx(),
-        );
+        )
+        .unwrap();
         assert_eq!(
             rel,
             ProverRelation::Group {
@@ -830,7 +843,7 @@ mod tests {
     #[test]
     fn test_roundtrip_simple_query() {
         let name_map: HashMap<String, String> = [("R".to_string(), "PUBLIC.R".to_string())].into();
-        let prover = convert_input(&qed(), &name_map);
+        let prover = convert_input(&qed(), &name_map).unwrap();
         assert_eq!(prover.schemas[0].name, "PUBLIC.R");
         let json = serde_json::to_value(&prover).expect("serialize");
         assert!(json.is_object());
@@ -943,7 +956,8 @@ mod tests {
                     right: Box::new(sc())
                 },
                 &idx()
-            ),
+            )
+            .unwrap(),
             ProverRelation::Intersect(vec![
                 ProverRelation::Scan(VL(0)),
                 ProverRelation::Scan(VL(0))
@@ -956,7 +970,8 @@ mod tests {
                     right: Box::new(sc())
                 },
                 &idx()
-            ),
+            )
+            .unwrap(),
             ProverRelation::Except(
                 Box::new(ProverRelation::Scan(VL(0))),
                 Box::new(ProverRelation::Scan(VL(0)))
@@ -968,7 +983,8 @@ mod tests {
                     input: Box::new(sc())
                 },
                 &idx()
-            ),
+            )
+            .unwrap(),
             ProverRelation::Distinct(Box::new(ProverRelation::Scan(VL(0))))
         );
     }
