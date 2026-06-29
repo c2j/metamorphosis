@@ -28,6 +28,7 @@ pub struct Environment {
     pub semantics: Semantics,
 
     pub aliases: HashMap<String, String>,
+    pub all_tuples: Vec<Dynamic>,
     tuple_counter: usize,
 }
 
@@ -66,6 +67,7 @@ impl Environment {
             bound_size: bound.0,
             semantics,
             aliases: HashMap::new(),
+            all_tuples: Vec::new(),
             tuple_counter: 0,
         }
     }
@@ -124,7 +126,15 @@ impl Environment {
             tuples.push(tuple);
         }
 
+        // Store for use by EXISTS encoding and other multi-tuple patterns.
+        self.all_tuples.extend(tuples.clone());
+
         tuples
+    }
+
+    /// Return all concrete tuples across all tables.
+    pub fn all_table_tuples(&self) -> &[Dynamic] {
+        &self.all_tuples
     }
 
     /// Build the canonical attribute key: `TABLE.COLUMN`.

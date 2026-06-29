@@ -188,6 +188,17 @@ pub fn encode_expr_bool(
                 Ok(is_null)
             }
         }
+        Expr::Exists(subquery) => {
+            // EXISTS(subquery) is true if at least one concrete tuple
+            // satisfies the subquery relation.
+            let tuples = env.all_table_tuples();
+            let mut any = Bool::from_bool(false);
+            for sub_tuple in tuples {
+                let pred = encode_relation_for_tuple(subquery, sub_tuple, env)?;
+                any = Bool::or(&[&any, &pred]);
+            }
+            Ok(any)
+        }
         Expr::Literal(ExprValue::Boolean(v)) => Ok(Bool::from_bool(*v)),
         _ => Err(EncodeError::UnsupportedExpr(format!(
             "encode_expr_bool: unsupported expression: {:?}",

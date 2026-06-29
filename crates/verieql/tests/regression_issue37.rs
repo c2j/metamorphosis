@@ -201,17 +201,12 @@ fn regression_37_def2_exists_identity_false_negative() {
     );
 
     match result {
-        Ok(report) => panic!(
-            "BUG: EXISTS identity should not produce a proof result with fresh_const fallback. Got: {:?}",
+        Ok(report) => assert!(
+            matches!(report.result, ProofResult::Equivalent),
+            "Identity EXISTS proof should be Equivalent. Got: {:?}",
             report.result
         ),
-        Err(e) => {
-            // Expected: encoder rejects EXISTS as unsupported (until Task 3.4 implements it)
-            assert!(
-                e.to_string().contains("unsupported") || e.to_string().contains("UnsupportedExpr"),
-                "Expected unsupported expression error, got: {e}"
-            );
-        }
+        Err(e) => panic!("EXISTS identity should not error: {e}"),
     }
 }
 
