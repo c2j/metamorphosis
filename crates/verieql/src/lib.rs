@@ -81,6 +81,10 @@ impl VeriEql {
 
         constraints::apply_constraints(constraints, &mut env)?;
 
+        // Register table aliases so qualified column references resolve correctly.
+        register_aliases(&mut env, &ir1);
+        register_aliases(&mut env, &ir2);
+
         let output_tuple = env.declare_tuple();
 
         let q1_pred = encoder::encode_relation_for_tuple(&ir1, &output_tuple, &env)?;
@@ -130,6 +134,31 @@ impl VeriEql {
             .into_iter()
             .next()
             .ok_or_else(|| VeriEqlError::ParseError("empty SQL input".to_string()))
+    }
+}
+
+/// Walk the IR tree and register table aliases into the environment.
+fn register_aliases(env: &mut environment::Environment, rel: &ir::Relation) {
+    match rel {
+        ir::Relation::BaseTable {
+            name, alias: Some(a), ..
+        } => env.register_alias(a, name),
+        ir::Relation::Filter { input, .. }
+        | ir::Relation::Project { input, .. }
+        | ir::Relation::Distinct { input }
+        | ir::Relation::OrderBy { input, .. } => register_aliases(env, input),
+        ir::Relation::Join { left, right, .. } => {
+            register_aliases(env, left);
+            register_aliases(env, right);
+        }
+        ir::Relation::GroupBy { input, .. } => register_aliases(env, input),
+        ir::Relation::Union { left, right, .. }
+        | ir::Relation::Intersect { left, right, .. }
+        | ir::Relation::Except { left, right, .. } => {
+            register_aliases(env, left);
+            register_aliases(env, right);
+        }
+        _ => {}
     }
 }
 

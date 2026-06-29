@@ -49,21 +49,33 @@ pub fn solve_equivalence(input: &QedInput) -> Result<ProofResult, ProverError> {
         .map(|i| Int::new_const(format!("out_{i}")))
         .collect();
 
-    let q1 = encode_relation(&input.queries[0], &output_vars, &schema_map, &table_funcs)?;
-    let q2 = encode_relation(&input.queries[1], &output_vars, &schema_map, &table_funcs)?;
+    let result = (|| -> Result<ProofResult, ProverError> {
+        let q1 = encode_relation(&input.queries[0], &output_vars, &schema_map, &table_funcs)?;
+        let q2 = encode_relation(&input.queries[1], &output_vars, &schema_map, &table_funcs)?;
 
-    let solver = Solver::new();
-    solver.assert(q1.eq(&q2).not());
+        let solver = Solver::new();
+        solver.assert(q1.eq(&q2).not());
 
-    match solver.check() {
-        SatResult::Unsat => Ok(ProofResult::Equivalent),
-        SatResult::Sat => {
-            let ce = solver.get_model().map(|m| format!("{m}"));
-            Ok(ProofResult::NotEquivalent { counterexample: ce })
+        match solver.check() {
+            SatResult::Unsat => Ok(ProofResult::Equivalent),
+            SatResult::Sat => {
+                let ce = solver.get_model().map(|m| format!("{m}"));
+                Ok(ProofResult::NotEquivalent { counterexample: ce })
+            }
+            SatResult::Unknown => Ok(ProofResult::Unknown {
+                reason: "Z3 solver returned Unknown".to_string(),
+            }),
         }
-        SatResult::Unknown => Ok(ProofResult::Unknown {
-            reason: "Z3 solver returned Unknown".to_string(),
-        }),
+    })();
+
+    match result {
+        Ok(proof) => Ok(proof),
+        Err(ProverError::Io(msg))
+            if msg.contains("DISTINCT") || msg.contains("quantified") =>
+        {
+            Ok(ProofResult::Unknown { reason: msg })
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -124,6 +136,43 @@ fn compute_output_arity(
     }
 }
 
+/// Check if a Distinct wrapper is provably a no-op: the input relation's
+/// output columns include a unique key from the underlying table.
+fn distinct_is_noop(
+    input: &QedRelation,
+    schemas: &HashMap<String, QedSchema>,
+) -> bool {
+    match input {
+        QedRelation::Join { left, right, .. } => {
+            distinct_is_noop(left, schemas) && distinct_is_noop(right, schemas)
+        }
+        QedRelation::Scan { table, fields } => {
+            let schema = match schemas.get(table) {
+                Some(s) => s,
+                None => return false,
+            };
+            if schema.key.is_empty() {
+                return false;
+            }
+            if fields.is_empty() {
+                // All columns selected — PK columns are included
+                true
+            } else {
+                // Check if any PK column is in the selected fields
+                schema.key.iter().any(|k| fields.contains(k))
+            }
+        }
+        QedRelation::Filter { input, .. } | QedRelation::QOp { input, .. } => {
+            distinct_is_noop(input, schemas)
+        }
+        QedRelation::Project { input, .. } => {
+            // Project preserves uniqueness if input has a unique output
+            distinct_is_noop(input, schemas)
+        }
+        _ => false,
+    }
+}
+
 fn encode_relation(
     rel: &QedRelation,
     output_vars: &[Int],
@@ -165,7 +214,15 @@ fn encode_relation(
             Ok(Bool::and(&[&l, &r.not()]))
         }
         QedRelation::Distinct { input } => {
-            encode_relation(input, output_vars, schemas, table_funcs)
+            if distinct_is_noop(input, schemas) {
+                tracing::debug!("Distinct is provably a no-op (PK/unique guarantee); encoding as passthrough");
+                encode_relation(input, output_vars, schemas, table_funcs)
+            } else {
+                tracing::warn!("Distinct cannot be soundly encoded without uniqueness guarantee; returning error");
+                Err(ProverError::Io(
+                    "DISTINCT cannot be soundly encoded: no uniqueness guarantee on output columns".into(),
+                ))
+            }
         }
         QedRelation::Values { rows } => encode_values(rows, output_vars),
         QedRelation::Aggregate { .. } => encode_uninterpreted("agg", output_vars),
@@ -333,8 +390,11 @@ fn encode_expr(expr: &QedExpr, vars: &[Int]) -> Result<Dynamic, ProverError> {
             Ok(Dynamic::from(Int::fresh_const("fn")))
         }
         QedExpr::Quantified { .. } => {
-            tracing::warn!("quantified expression -> fresh variable");
-            Ok(Dynamic::from(Int::fresh_const("qnt")))
+            tracing::warn!("quantified expression cannot be soundly encoded");
+            Err(ProverError::Io(
+                "quantified expression (IN/EXISTS subquery) not supported in Z3 encoding; \
+                 decorrelation should have handled this".into(),
+            ))
         }
     }
 }

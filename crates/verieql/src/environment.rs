@@ -27,6 +27,8 @@ pub struct Environment {
     pub bound_size: usize,
     pub semantics: Semantics,
 
+    pub aliases: HashMap<String, String>,
+    pub all_tuples: Vec<Dynamic>,
     tuple_counter: usize,
 }
 
@@ -64,6 +66,8 @@ impl Environment {
             dbms_facts: Vec::new(),
             bound_size: bound.0,
             semantics,
+            aliases: HashMap::new(),
+            all_tuples: Vec::new(),
             tuple_counter: 0,
         }
     }
@@ -94,6 +98,12 @@ impl Environment {
         self.dbms_facts.push(fact);
     }
 
+    /// Register a table alias mapping (alias → real table name).
+    pub fn register_alias(&mut self, alias: &str, real_table: &str) {
+        self.aliases
+            .insert(alias.to_uppercase(), real_table.to_uppercase());
+    }
+
     /// Create B symbolic tuples for a table, declaring all column functions.
     pub fn create_database(&mut self, schema: &TableSchema) -> Vec<Dynamic> {
         let table_name = schema.name.to_uppercase();
@@ -116,7 +126,15 @@ impl Environment {
             tuples.push(tuple);
         }
 
+        // Store for use by EXISTS encoding and other multi-tuple patterns.
+        self.all_tuples.extend(tuples.clone());
+
         tuples
+    }
+
+    /// Return all concrete tuples across all tables.
+    pub fn all_table_tuples(&self) -> &[Dynamic] {
+        &self.all_tuples
     }
 
     /// Build the canonical attribute key: `TABLE.COLUMN`.
@@ -125,7 +143,14 @@ impl Environment {
     /// across all declared tables. Returns the first match.
     pub fn attr_key(&self, table: Option<&str>, column: &str) -> String {
         match table {
-            Some(t) => format!("{}.{}", t.to_uppercase(), column.to_uppercase()),
+            Some(t) => {
+                let real = self
+                    .aliases
+                    .get(&t.to_uppercase())
+                    .map(|s| s.as_str())
+                    .unwrap_or(t);
+                format!("{}.{}", real.to_uppercase(), column.to_uppercase())
+            }
             None => {
                 let upper = column.to_uppercase();
                 let suffix = format!(".{upper}");

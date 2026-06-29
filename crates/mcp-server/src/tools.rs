@@ -42,6 +42,69 @@ use crate::types::{
     VerifyResponse,
 };
 
+/// A table's schema entry in JSON — supports both legacy and new formats.
+///
+/// # Legacy format (backward compatible)
+/// `{"id": "INTEGER", "name": "VARCHAR(100)"}`
+///
+/// # New format (with primary key)
+/// `{"columns": {"id": "INTEGER", "name": "VARCHAR(100)"}, "primary_key": ["id"]}`
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum TableSchemaEntry {
+    /// Legacy flat format: column names mapped to type strings.
+    Legacy(std::collections::HashMap<String, String>),
+    /// New structured format with optional primary key declaration.
+    Structured {
+        columns: std::collections::HashMap<String, String>,
+        #[serde(default)]
+        primary_key: Vec<String>,
+    },
+}
+
+impl TableSchemaEntry {
+    /// Returns the column-to-type map regardless of format.
+    fn columns(&self) -> &std::collections::HashMap<String, String> {
+        match self {
+            Self::Legacy(cols) => cols,
+            Self::Structured { columns, .. } => columns,
+        }
+    }
+
+    /// Returns the primary key columns (empty for legacy format).
+    fn primary_key(&self) -> &[String] {
+        match self {
+            Self::Legacy(_) => &[],
+            Self::Structured { primary_key, .. } => primary_key,
+        }
+    }
+}
+
+/// Build DDL statements from schema entries, including `PRIMARY KEY` clauses
+/// when primary key info is present (new JSON format).
+fn schema_entries_to_ddl(
+    schema: &std::collections::HashMap<String, TableSchemaEntry>,
+) -> String {
+    let mut ddl = String::new();
+    for (table_name, entry) in schema {
+        ddl.push_str("CREATE TABLE ");
+        ddl.push_str(table_name);
+        ddl.push_str(" (");
+        let mut defs: Vec<String> = entry
+            .columns()
+            .iter()
+            .map(|(name, typ)| format!("{} {}", name, typ.to_uppercase()))
+            .collect();
+        let pk = entry.primary_key();
+        if !pk.is_empty() {
+            defs.push(format!("PRIMARY KEY ({})", pk.join(", ")));
+        }
+        ddl.push_str(&defs.join(", "));
+        ddl.push_str(");\n");
+    }
+    ddl
+}
+
 // ── Helper functions ──────────────────────────────────────────────────────
 
 /// Load a [`SchemaMap`] from one of three mutually exclusive sources:
@@ -87,6 +150,117 @@ pub fn load_schema(
     Ok(None)
 }
 
+/// Load schema as DDL with primary key info preserved, for QED verification.
+///
+/// Unlike [`load_schema`] which returns a flat [`SchemaMap`] (losing PK info),
+/// this function:
+/// - Parses the new JSON format (`{columns, primary_key}`) preserving PK
+/// - Reads raw `.sql` files from `sql_dir` directly (preserving embedded PK clauses)
+fn load_schema_ddl_with_pk(
+    schema_json: Option<&str>,
+    schema_path: Option<&str>,
+    sql_dir: Option<&str>,
+) -> Result<String, String> {
+    let sources =
+        schema_json.is_some() as u8 + schema_path.is_some() as u8 + sql_dir.is_some() as u8;
+    if sources > 1 {
+        return Err("schema_json, schema_path, and sql_dir are mutually exclusive".to_string());
+    }
+
+    if let Some(json_str) = schema_json {
+        let entries: std::collections::HashMap<String, TableSchemaEntry> =
+            serde_json::from_str(json_str)
+                .map_err(|e| format!("invalid schema_json: {e}"))?;
+        return Ok(schema_entries_to_ddl(&entries));
+    }
+
+    if let Some(path) = schema_path {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read schema_path '{path}': {e}"))?;
+        let entries: std::collections::HashMap<String, TableSchemaEntry> =
+            serde_json::from_str(&content)
+                .map_err(|e| format!("invalid schema JSON at '{path}': {e}"))?;
+        return Ok(schema_entries_to_ddl(&entries));
+    }
+
+    if let Some(dir) = sql_dir {
+        // Read raw .sql files directly to preserve PRIMARY KEY clauses
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .map_err(|e| format!("cannot read sql_dir '{dir}': {e}"))?
+            .filter_map(|r| r.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext.eq_ignore_ascii_case("sql"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        let mut ddl = String::new();
+        for entry in &entries {
+            let content = std::fs::read_to_string(entry.path())
+                .map_err(|e| format!("cannot read '{}': {e}", entry.path().display()))?;
+            ddl.push_str(&content);
+            if !ddl.ends_with('\n') {
+                ddl.push('\n');
+            }
+        }
+        if ddl.is_empty() {
+            return Err(format!("no .sql files found in sql_dir '{dir}'"));
+        }
+        return Ok(ddl);
+    }
+
+    Err(
+        "schema required for QED verification: provide schema_json, schema_path, or sql_dir"
+            .to_string(),
+    )
+}
+
+/// Load schema as VeriEQL TableSchemas, with new-format JSON support.
+fn load_verieql_schema_from_sources(
+    schema_json: Option<&str>,
+    schema_path: Option<&str>,
+    sql_dir: Option<&str>,
+) -> Result<Vec<TableSchema>, String> {
+    let sources =
+        schema_json.is_some() as u8 + schema_path.is_some() as u8 + sql_dir.is_some() as u8;
+    if sources > 1 {
+        return Err("schema_json, schema_path, and sql_dir are mutually exclusive".to_string());
+    }
+
+    let entries: std::collections::HashMap<String, TableSchemaEntry> = if let Some(json_str) = schema_json {
+        serde_json::from_str(json_str).map_err(|e| format!("invalid schema_json: {e}"))?
+    } else if let Some(path) = schema_path {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read schema_path '{path}': {e}"))?;
+        serde_json::from_str(&content).map_err(|e| format!("invalid schema JSON at '{path}': {e}"))?
+    } else if let Some(dir) = sql_dir {
+        let map = extract_schema_from_dir(Path::new(dir))
+            .map_err(|e| format!("schema extraction from '{dir}': {e}"))?;
+        map.into_iter()
+            .map(|(table, cols)| (table, TableSchemaEntry::Legacy(cols)))
+            .collect()
+    } else {
+        return Err("schema required for VeriEQL verification".to_string());
+    };
+
+    Ok(entries
+        .iter()
+        .map(|(table_name, entry)| TableSchema {
+            name: table_name.clone(),
+            columns: entry
+                .columns()
+                .iter()
+                .map(|(col_name, col_type)| metamorphosis_verieql::types::ColumnDef {
+                    name: col_name.clone(),
+                    col_type: sql_type_to_verieql(col_type),
+                })
+                .collect(),
+        })
+        .collect())
+}
+
 /// Build a [`RewriteEngine`] with all built-in rules registered.
 pub fn build_engine() -> RewriteEngine {
     let rules = metamorphosis_rules::builtin_rules();
@@ -110,45 +284,6 @@ pub fn format_stmt(stmt: &Statement) -> String {
     SqlFormatter::new()
         .pretty_print(true)
         .format_statement(stmt)
-}
-
-/// Convert a [`SchemaMap`] to CREATE TABLE DDL statements.
-///
-/// This produces a minimal DDL string that can be re-parsed and passed to
-/// [`extract_rich_schema`] for QED verification.
-fn schema_map_to_ddl(schema: &SchemaMap) -> String {
-    let mut ddl = String::new();
-    for (table_name, columns) in schema {
-        ddl.push_str("CREATE TABLE ");
-        ddl.push_str(table_name);
-        ddl.push_str(" (");
-        let col_defs: Vec<String> = columns
-            .iter()
-            .map(|(name, typ)| format!("{} {}", name, typ.to_uppercase()))
-            .collect();
-        ddl.push_str(&col_defs.join(", "));
-        ddl.push_str(");\n");
-    }
-    ddl
-}
-
-/// Convert a [`SchemaMap`] to a [`Vec<TableSchema>`] for VeriEQL.
-fn schema_map_to_verieql(schema: &SchemaMap) -> Vec<TableSchema> {
-    schema
-        .iter()
-        .map(|(table_name, columns)| TableSchema {
-            name: table_name.clone(),
-            columns: columns
-                .iter()
-                .map(
-                    |(col_name, col_type)| metamorphosis_verieql::types::ColumnDef {
-                        name: col_name.clone(),
-                        col_type: sql_type_to_verieql(col_type),
-                    },
-                )
-                .collect(),
-        })
-        .collect()
 }
 
 /// Map a SQL type string to a VeriEQL [`ColumnType`].
@@ -401,15 +536,11 @@ pub fn verify_equivalence(params: crate::types::VerifyParams) -> Result<VerifyRe
 
 /// Verify equivalence using the QED prover (embedded Z3).
 fn verify_with_qed(params: crate::types::VerifyParams) -> Result<VerifyResponse, String> {
-    let schema = load_schema(
+    let ddl = load_schema_ddl_with_pk(
         params.schema_json.as_deref(),
         params.schema_path.as_deref(),
         params.sql_dir.as_deref(),
-    )?
-    .ok_or_else(|| {
-        "schema required for QED verification: provide schema_json, schema_path, or sql_dir"
-            .to_string()
-    })?;
+    )?;
 
     // Parse both SQL strings into single statements
     let (orig_infos, _) = Parser::parse_sql(&params.original_sql);
@@ -426,8 +557,7 @@ fn verify_with_qed(params: crate::types::VerifyParams) -> Result<VerifyResponse,
         .ok_or_else(|| "rewritten_sql produced no statements".to_string())?
         .statement;
 
-    // Build DDL from SchemaMap, parse it, and extract rich schema
-    let ddl = schema_map_to_ddl(&schema);
+    // Parse DDL and extract rich schema (PK preserved)
     let (ddl_infos, _) = Parser::parse_sql(&ddl);
     let ddl_stmts: Vec<Statement> = ddl_infos.into_iter().map(|si| si.statement).collect();
     let rich_schema = extract_rich_schema(&ddl_stmts);
@@ -475,18 +605,13 @@ fn verify_with_qed(params: crate::types::VerifyParams) -> Result<VerifyResponse,
 
 /// Verify equivalence using VeriEQL bounded model checking.
 fn verify_with_verieql(params: crate::types::VerifyParams) -> Result<VerifyResponse, String> {
-    let schema = load_schema(
+    let verieql_schema = load_verieql_schema_from_sources(
         params.schema_json.as_deref(),
         params.schema_path.as_deref(),
         params.sql_dir.as_deref(),
-    )?
-    .ok_or_else(|| {
-        "schema required for VeriEQL verification: provide schema_json, schema_path, or sql_dir"
-            .to_string()
-    })?;
+    )?;
 
     let bound = params.bound.unwrap_or(2);
-    let verieql_schema = schema_map_to_verieql(&schema);
     let constraints = serde_json::json!(null);
 
     let report = VeriEql::verify(
