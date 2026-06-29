@@ -5,8 +5,8 @@
 //! These tests reproduce the three defects before fixes are applied.
 //! After fixes, they should pass.
 
-use metamorphosis_qed::prover::ProverConfig;
 use metamorphosis_qed::prover::ProofResult;
+use metamorphosis_qed::prover::ProverConfig;
 use metamorphosis_qed::schema::extract_rich_schema;
 use metamorphosis_qed::verify::verify_rewrite;
 use ogsql_parser::ast::Statement;
@@ -166,9 +166,7 @@ fn regression_36_def2_in_subquery_no_panic() {
         Ok(vr) => {
             eprintln!("IN subquery proof result: {:?}", vr.proof);
         }
-        Err(e) => panic!(
-            "BUG #36-Def2: IN(subquery) verification should not error/panic: {e}"
-        ),
+        Err(e) => panic!("BUG #36-Def2: IN(subquery) verification should not error/panic: {e}"),
     }
 }
 

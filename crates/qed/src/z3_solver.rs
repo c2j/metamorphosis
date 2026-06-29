@@ -70,9 +70,7 @@ pub fn solve_equivalence(input: &QedInput) -> Result<ProofResult, ProverError> {
 
     match result {
         Ok(proof) => Ok(proof),
-        Err(ProverError::Io(msg))
-            if msg.contains("DISTINCT") || msg.contains("quantified") =>
-        {
+        Err(ProverError::Io(msg)) if msg.contains("DISTINCT") || msg.contains("quantified") => {
             Ok(ProofResult::Unknown { reason: msg })
         }
         Err(e) => Err(e),
@@ -138,10 +136,7 @@ fn compute_output_arity(
 
 /// Check if a Distinct wrapper is provably a no-op: the input relation's
 /// output columns include a unique key from the underlying table.
-fn distinct_is_noop(
-    input: &QedRelation,
-    schemas: &HashMap<String, QedSchema>,
-) -> bool {
+fn distinct_is_noop(input: &QedRelation, schemas: &HashMap<String, QedSchema>) -> bool {
     match input {
         QedRelation::Join { left, right, .. } => {
             distinct_is_noop(left, schemas) && distinct_is_noop(right, schemas)
@@ -215,12 +210,15 @@ fn encode_relation(
         }
         QedRelation::Distinct { input } => {
             if distinct_is_noop(input, schemas) {
-                tracing::debug!("Distinct is provably a no-op (PK/unique guarantee); encoding as passthrough");
+                tracing::debug!(
+                    "Distinct is provably a no-op (PK/unique guarantee); encoding as passthrough"
+                );
                 encode_relation(input, output_vars, schemas, table_funcs)
             } else {
                 tracing::warn!("Distinct cannot be soundly encoded without uniqueness guarantee; returning error");
                 Err(ProverError::Io(
-                    "DISTINCT cannot be soundly encoded: no uniqueness guarantee on output columns".into(),
+                    "DISTINCT cannot be soundly encoded: no uniqueness guarantee on output columns"
+                        .into(),
                 ))
             }
         }
@@ -393,7 +391,8 @@ fn encode_expr(expr: &QedExpr, vars: &[Int]) -> Result<Dynamic, ProverError> {
             tracing::warn!("quantified expression cannot be soundly encoded");
             Err(ProverError::Io(
                 "quantified expression (IN/EXISTS subquery) not supported in Z3 encoding; \
-                 decorrelation should have handled this".into(),
+                 decorrelation should have handled this"
+                    .into(),
             ))
         }
     }

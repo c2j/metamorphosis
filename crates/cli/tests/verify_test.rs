@@ -41,10 +41,7 @@ fn test_verify_help() {
         .output()
         .expect("Failed to run metamorphosis verify --help");
 
-    assert!(
-        output.status.success(),
-        "verify --help should succeed"
-    );
+    assert!(output.status.success(), "verify --help should succeed");
     let stdout = str::from_utf8(&output.stdout).unwrap();
     assert!(
         stdout.contains("Usage") || stdout.contains("schema"),
@@ -194,7 +191,11 @@ fn test_verify_identity_qed_with_sql_dir() {
 fn test_verify_select_star_expansion_qed() {
     let dir = tempfile::tempdir().unwrap();
     let orig = write_file(&dir, "orig.sql", "SELECT * FROM users WHERE id = 1");
-    let rewritten = write_file(&dir, "rewritten.sql", "SELECT id, name FROM users WHERE id = 1");
+    let rewritten = write_file(
+        &dir,
+        "rewritten.sql",
+        "SELECT id, name FROM users WHERE id = 1",
+    );
     let schema = write_json_schema(
         &dir,
         "schema.json",
@@ -229,7 +230,11 @@ fn test_verify_between_collapsed_to_eq_qed() {
     let dir = tempfile::tempdir().unwrap();
     let orig = write_file(&dir, "orig.sql", "SELECT a FROM t WHERE a BETWEEN 5 AND 5");
     let rewritten = write_file(&dir, "rewritten.sql", "SELECT a FROM t WHERE a = 5");
-    let schema = write_json_schema(&dir, "schema.json", &[("t", &[("a", "integer"), ("b", "integer")])]);
+    let schema = write_json_schema(
+        &dir,
+        "schema.json",
+        &[("t", &[("a", "integer"), ("b", "integer")])],
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_metamorphosis"))
         .arg("verify")
@@ -320,8 +325,8 @@ fn test_verify_json_output_format() {
         str::from_utf8(&output.stderr).unwrap()
     );
     let stdout = str::from_utf8(&output.stdout).unwrap();
-    let value: serde_json::Value = serde_json::from_str(stdout)
-        .expect("stdout should be valid JSON");
+    let value: serde_json::Value =
+        serde_json::from_str(stdout).expect("stdout should be valid JSON");
     assert_eq!(
         value["result"], "Equivalent",
         "JSON result should be Equivalent, got: {}",
@@ -412,7 +417,11 @@ fn test_verify_exists_to_join_json_schema_no_pk() {
         &[
             (
                 "orders",
-                &[("order_id", "integer"), ("user_id", "integer"), ("amount", "numeric")],
+                &[
+                    ("order_id", "integer"),
+                    ("user_id", "integer"),
+                    ("amount", "numeric"),
+                ],
             ),
             ("users", &[("id", "integer"), ("name", "varchar(100)")]),
         ],

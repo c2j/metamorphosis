@@ -141,7 +141,9 @@ impl VeriEql {
 fn register_aliases(env: &mut environment::Environment, rel: &ir::Relation) {
     match rel {
         ir::Relation::BaseTable {
-            name, alias: Some(a), ..
+            name,
+            alias: Some(a),
+            ..
         } => env.register_alias(a, name),
         ir::Relation::Filter { input, .. }
         | ir::Relation::Project { input, .. }

@@ -29,9 +29,7 @@ pub fn encode_relation_for_tuple(
             Ok(Bool::and(&[&inner, &cond]))
         }
         Relation::Project {
-            input,
-            distinct,
-            ..
+            input, distinct, ..
         } => {
             if *distinct {
                 return Err(EncodeError::UnsupportedRelation(
@@ -230,14 +228,10 @@ pub fn encode_expr_bool(
             let tuples = env.all_table_tuples();
             let mut any = Bool::from_bool(false);
             for sub_tuple in tuples {
-                let in_relation =
-                    encode_relation_for_tuple(subquery, sub_tuple, env)?;
+                let in_relation = encode_relation_for_tuple(subquery, sub_tuple, env)?;
                 let lhs_val = encode_expr_int(lhs, tuple, env)?;
                 let rhs_val = encode_expr_int(sub_output, sub_tuple, env)?;
-                any = Bool::or(&[
-                    &any,
-                    &Bool::and(&[&in_relation, &lhs_val.eq(&rhs_val)]),
-                ]);
+                any = Bool::or(&[&any, &Bool::and(&[&in_relation, &lhs_val.eq(&rhs_val)])]);
             }
 
             if *negated {

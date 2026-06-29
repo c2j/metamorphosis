@@ -354,12 +354,11 @@ pub fn convert_relation_with_types(
 ) -> Result<ProverRelation, ProverError> {
     match rel {
         QedRelation::Scan { table, .. } => {
-            let idx = schema_index
-                .get(table)
-                .copied()
-                .ok_or_else(|| ProverError::Io(
-                    format!("convert_relation: table '{table}' not found in schema_index")
-                ))?;
+            let idx = schema_index.get(table).copied().ok_or_else(|| {
+                ProverError::Io(format!(
+                    "convert_relation: table '{table}' not found in schema_index"
+                ))
+            })?;
             Ok(ProverRelation::Scan(VL(idx)))
         }
         QedRelation::Filter { condition, input } => Ok(ProverRelation::Filter {
@@ -507,7 +506,10 @@ pub fn convert_schema(schema: &QedSchema) -> ProverSchema {
 ///
 /// `schema_name_map` maps table names to qualified names (e.g., `"emp"` → `"PUBLIC.emp"`).
 /// Schema index is built automatically; `help` is duplicated for both queries.
-pub fn convert_input(our: &QedInput, schema_name_map: &HashMap<String, String>) -> Result<ProverInput, ProverError> {
+pub fn convert_input(
+    our: &QedInput,
+    schema_name_map: &HashMap<String, String>,
+) -> Result<ProverInput, ProverError> {
     let mut schema_index: HashMap<String, usize> = HashMap::with_capacity(our.schemas.len());
     let mut prover_schemas: Vec<ProverSchema> = Vec::with_capacity(our.schemas.len());
     let mut column_types: HashMap<usize, ProverDataType> = HashMap::new();
@@ -769,9 +771,7 @@ mod tests {
     #[test]
     fn test_convert_help_is_tuple() {
         assert_eq!(
-            convert_input(&qed(), &HashMap::new())
-                .unwrap()
-                .help,
+            convert_input(&qed(), &HashMap::new()).unwrap().help,
             ("test".to_string(), "test".to_string())
         );
     }

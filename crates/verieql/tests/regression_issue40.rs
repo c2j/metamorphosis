@@ -298,18 +298,16 @@ fn regression_40_in_subquery_to_join_no_pk_not_equivalent() {
     );
 
     match result {
-        Ok(report) => {
-            match &report.result {
-                ProofResult::NotEquivalent { .. } => {}
-                ProofResult::Equivalent => {
-                    eprintln!(
-                        "KNOWN LIMITATION: IN→JOIN no-PK reported Equivalent \
+        Ok(report) => match &report.result {
+            ProofResult::NotEquivalent { .. } => {}
+            ProofResult::Equivalent => {
+                eprintln!(
+                    "KNOWN LIMITATION: IN→JOIN no-PK reported Equivalent \
                          (VeriEQL bag semantics limitation)"
-                    );
-                }
-                other => panic!("Unexpected result for IN→JOIN no-PK: {:?}", other),
+                );
             }
-        }
+            other => panic!("Unexpected result for IN→JOIN no-PK: {:?}", other),
+        },
         Err(e) => {
             let msg = e.to_string();
             assert!(

@@ -12,16 +12,31 @@ fn emp_dept_schema() -> Vec<TableSchema> {
         TableSchema {
             name: "EMP".into(),
             columns: vec![
-                ColumnDef { name: "ID".into(), col_type: ColumnType::Integer },
-                ColumnDef { name: "NAME".into(), col_type: ColumnType::Varchar },
-                ColumnDef { name: "DEPT".into(), col_type: ColumnType::Integer },
+                ColumnDef {
+                    name: "ID".into(),
+                    col_type: ColumnType::Integer,
+                },
+                ColumnDef {
+                    name: "NAME".into(),
+                    col_type: ColumnType::Varchar,
+                },
+                ColumnDef {
+                    name: "DEPT".into(),
+                    col_type: ColumnType::Integer,
+                },
             ],
         },
         TableSchema {
             name: "DEPT".into(),
             columns: vec![
-                ColumnDef { name: "ID".into(), col_type: ColumnType::Integer },
-                ColumnDef { name: "DNAME".into(), col_type: ColumnType::Varchar },
+                ColumnDef {
+                    name: "ID".into(),
+                    col_type: ColumnType::Integer,
+                },
+                ColumnDef {
+                    name: "DNAME".into(),
+                    col_type: ColumnType::Varchar,
+                },
             ],
         },
     ]
@@ -31,9 +46,18 @@ fn emp_schema() -> Vec<TableSchema> {
     vec![TableSchema {
         name: "EMP".into(),
         columns: vec![
-            ColumnDef { name: "ID".into(), col_type: ColumnType::Integer },
-            ColumnDef { name: "NAME".into(), col_type: ColumnType::Varchar },
-            ColumnDef { name: "SAL".into(), col_type: ColumnType::Integer },
+            ColumnDef {
+                name: "ID".into(),
+                col_type: ColumnType::Integer,
+            },
+            ColumnDef {
+                name: "NAME".into(),
+                col_type: ColumnType::Varchar,
+            },
+            ColumnDef {
+                name: "SAL".into(),
+                col_type: ColumnType::Integer,
+            },
         ],
     }]
 }
@@ -70,9 +94,7 @@ fn regression_37_def1_join_alias_qualified_column_identity() {
             "Identity proof with JOIN aliases should be Equivalent. Got: {:?}",
             report.result
         ),
-        Err(e) => panic!(
-            "BUG #37-Def1: JOIN alias resolution failed (should not error): {e}"
-        ),
+        Err(e) => panic!("BUG #37-Def1: JOIN alias resolution failed (should not error): {e}"),
     }
 }
 
@@ -184,16 +206,26 @@ fn regression_37_def2_exists_identity_false_negative() {
         TableSchema {
             name: "EMP".into(),
             columns: vec![
-                ColumnDef { name: "ID".into(), col_type: ColumnType::Integer },
-                ColumnDef { name: "NAME".into(), col_type: ColumnType::Varchar },
-                ColumnDef { name: "SAL".into(), col_type: ColumnType::Integer },
+                ColumnDef {
+                    name: "ID".into(),
+                    col_type: ColumnType::Integer,
+                },
+                ColumnDef {
+                    name: "NAME".into(),
+                    col_type: ColumnType::Varchar,
+                },
+                ColumnDef {
+                    name: "SAL".into(),
+                    col_type: ColumnType::Integer,
+                },
             ],
         },
         TableSchema {
             name: "DEPT".into(),
-            columns: vec![
-                ColumnDef { name: "ID".into(), col_type: ColumnType::Integer },
-            ],
+            columns: vec![ColumnDef {
+                name: "ID".into(),
+                col_type: ColumnType::Integer,
+            }],
         },
     ];
     let result = VeriEql::verify(
@@ -243,5 +275,3 @@ fn regression_37_def2_between_vs_expansion_false_negative() {
         }
     }
 }
-
-

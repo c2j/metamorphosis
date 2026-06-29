@@ -198,9 +198,8 @@ fn test_exists_to_distinct_join_equivalent() {
     let original = parse_single(
         "SELECT o.order_id FROM orders o WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = o.user_id)",
     );
-    let rewritten = parse_single(
-        "SELECT DISTINCT o.order_id FROM orders o JOIN users u ON u.id = o.user_id",
-    );
+    let rewritten =
+        parse_single("SELECT DISTINCT o.order_id FROM orders o JOIN users u ON u.id = o.user_id");
 
     let result = verify_rewrite(
         "exists-to-join",
@@ -261,12 +260,10 @@ fn test_not_exists_identity_pk() {
     );
     let schema = extract_rich_schema(&ddl);
 
-    let original = parse_single(
-        "SELECT o.order_id FROM orders o WHERE NOT EXISTS (SELECT 1 FROM users)",
-    );
-    let rewritten = parse_single(
-        "SELECT o.order_id FROM orders o WHERE NOT EXISTS (SELECT 1 FROM users)",
-    );
+    let original =
+        parse_single("SELECT o.order_id FROM orders o WHERE NOT EXISTS (SELECT 1 FROM users)");
+    let rewritten =
+        parse_single("SELECT o.order_id FROM orders o WHERE NOT EXISTS (SELECT 1 FROM users)");
 
     let result = verify_rewrite(
         "not-exists-identity",

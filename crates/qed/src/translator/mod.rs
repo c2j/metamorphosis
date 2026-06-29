@@ -549,8 +549,12 @@ impl<'a> AstTranslator<'a> {
                 });
             }
             Some(wc) => {
-                let corr = collect_correlation_preds(wc, outer_scope, &inner_scope)
-                    .unwrap_or(CorrelationResult { pairs: Vec::new(), residual: None });
+                let corr = collect_correlation_preds(wc, outer_scope, &inner_scope).unwrap_or(
+                    CorrelationResult {
+                        pairs: Vec::new(),
+                        residual: None,
+                    },
+                );
 
                 let conditions: Vec<QedExpr> = corr
                     .pairs
@@ -659,8 +663,12 @@ impl<'a> AstTranslator<'a> {
                 });
             }
             Some(wc) => {
-                let corr = collect_correlation_preds(wc, outer_scope, &inner_scope)
-                    .unwrap_or(CorrelationResult { pairs: Vec::new(), residual: None });
+                let corr = collect_correlation_preds(wc, outer_scope, &inner_scope).unwrap_or(
+                    CorrelationResult {
+                        pairs: Vec::new(),
+                        residual: None,
+                    },
+                );
 
                 let mut conditions: Vec<QedExpr> = corr
                     .pairs

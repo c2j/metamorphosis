@@ -82,9 +82,7 @@ impl TableSchemaEntry {
 
 /// Build DDL statements from schema entries, including `PRIMARY KEY` clauses
 /// when primary key info is present (new JSON format).
-fn schema_entries_to_ddl(
-    schema: &std::collections::HashMap<String, TableSchemaEntry>,
-) -> String {
+fn schema_entries_to_ddl(schema: &std::collections::HashMap<String, TableSchemaEntry>) -> String {
     let mut ddl = String::new();
     for (table_name, entry) in schema {
         ddl.push_str("CREATE TABLE ");
@@ -169,8 +167,7 @@ fn load_schema_ddl_with_pk(
 
     if let Some(json_str) = schema_json {
         let entries: std::collections::HashMap<String, TableSchemaEntry> =
-            serde_json::from_str(json_str)
-                .map_err(|e| format!("invalid schema_json: {e}"))?;
+            serde_json::from_str(json_str).map_err(|e| format!("invalid schema_json: {e}"))?;
         return Ok(schema_entries_to_ddl(&entries));
     }
 
@@ -229,21 +226,23 @@ fn load_verieql_schema_from_sources(
         return Err("schema_json, schema_path, and sql_dir are mutually exclusive".to_string());
     }
 
-    let entries: std::collections::HashMap<String, TableSchemaEntry> = if let Some(json_str) = schema_json {
-        serde_json::from_str(json_str).map_err(|e| format!("invalid schema_json: {e}"))?
-    } else if let Some(path) = schema_path {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("cannot read schema_path '{path}': {e}"))?;
-        serde_json::from_str(&content).map_err(|e| format!("invalid schema JSON at '{path}': {e}"))?
-    } else if let Some(dir) = sql_dir {
-        let map = extract_schema_from_dir(Path::new(dir))
-            .map_err(|e| format!("schema extraction from '{dir}': {e}"))?;
-        map.into_iter()
-            .map(|(table, cols)| (table, TableSchemaEntry::Legacy(cols)))
-            .collect()
-    } else {
-        return Err("schema required for VeriEQL verification".to_string());
-    };
+    let entries: std::collections::HashMap<String, TableSchemaEntry> =
+        if let Some(json_str) = schema_json {
+            serde_json::from_str(json_str).map_err(|e| format!("invalid schema_json: {e}"))?
+        } else if let Some(path) = schema_path {
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| format!("cannot read schema_path '{path}': {e}"))?;
+            serde_json::from_str(&content)
+                .map_err(|e| format!("invalid schema JSON at '{path}': {e}"))?
+        } else if let Some(dir) = sql_dir {
+            let map = extract_schema_from_dir(Path::new(dir))
+                .map_err(|e| format!("schema extraction from '{dir}': {e}"))?;
+            map.into_iter()
+                .map(|(table, cols)| (table, TableSchemaEntry::Legacy(cols)))
+                .collect()
+        } else {
+            return Err("schema required for VeriEQL verification".to_string());
+        };
 
     Ok(entries
         .iter()
@@ -252,10 +251,12 @@ fn load_verieql_schema_from_sources(
             columns: entry
                 .columns()
                 .iter()
-                .map(|(col_name, col_type)| metamorphosis_verieql::types::ColumnDef {
-                    name: col_name.clone(),
-                    col_type: sql_type_to_verieql(col_type),
-                })
+                .map(
+                    |(col_name, col_type)| metamorphosis_verieql::types::ColumnDef {
+                        name: col_name.clone(),
+                        col_type: sql_type_to_verieql(col_type),
+                    },
+                )
                 .collect(),
         })
         .collect())

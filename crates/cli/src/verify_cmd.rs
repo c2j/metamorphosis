@@ -208,9 +208,7 @@ fn load_verieql_schema(schema_path: Option<PathBuf>, sql_dir: Option<PathBuf>) -
 
 /// Build DDL statements from schema entries, including `PRIMARY KEY` clauses
 /// when primary key info is present (new JSON format).
-fn schema_entries_to_ddl(
-    schema: &std::collections::HashMap<String, TableSchemaEntry>,
-) -> String {
+fn schema_entries_to_ddl(schema: &std::collections::HashMap<String, TableSchemaEntry>) -> String {
     let mut ddl = String::new();
     for (table_name, entry) in schema {
         ddl.push_str("CREATE TABLE ");

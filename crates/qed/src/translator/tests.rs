@@ -412,7 +412,10 @@ fn test_non_correlated_exists_decorrelates() {
                     _ => unreachable!(),
                 };
                 // condition should be None (uncorrelated = cross join semantics)
-                assert!(join.is_none(), "uncorrelated EXISTS join should have no condition");
+                assert!(
+                    join.is_none(),
+                    "uncorrelated EXISTS join should have no condition"
+                );
             }
             _ => panic!("expected Distinct(Join), got: {input:?}"),
         },
