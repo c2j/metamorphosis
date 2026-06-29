@@ -1,0 +1,12 @@
+name = "subquery_to_join_in_pk"
+description = "正例：WHERE user_id IN (SELECT id FROM users) 改写为 INNER JOIN，当 users.id 是 PK 时两查询等价"
+rule = "subquery-to-join"
+
+[verify]
+enabled = true
+engine = "qed"
+expect = "equivalent"
+
+[db]
+enabled = true
+compare = "unordered"
