@@ -5,6 +5,7 @@
 pub enum Relation {
     BaseTable {
         name: String,
+        alias: Option<String>,
         columns: Vec<String>,
         tuple_count: usize,
     },

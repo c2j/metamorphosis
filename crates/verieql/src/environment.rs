@@ -27,6 +27,7 @@ pub struct Environment {
     pub bound_size: usize,
     pub semantics: Semantics,
 
+    pub aliases: HashMap<String, String>,
     tuple_counter: usize,
 }
 
@@ -64,6 +65,7 @@ impl Environment {
             dbms_facts: Vec::new(),
             bound_size: bound.0,
             semantics,
+            aliases: HashMap::new(),
             tuple_counter: 0,
         }
     }
@@ -92,6 +94,12 @@ impl Environment {
     /// Add a DBMS fact to the constraint set.
     pub fn add_fact(&mut self, fact: Bool) {
         self.dbms_facts.push(fact);
+    }
+
+    /// Register a table alias mapping (alias → real table name).
+    pub fn register_alias(&mut self, alias: &str, real_table: &str) {
+        self.aliases
+            .insert(alias.to_uppercase(), real_table.to_uppercase());
     }
 
     /// Create B symbolic tuples for a table, declaring all column functions.
@@ -125,7 +133,14 @@ impl Environment {
     /// across all declared tables. Returns the first match.
     pub fn attr_key(&self, table: Option<&str>, column: &str) -> String {
         match table {
-            Some(t) => format!("{}.{}", t.to_uppercase(), column.to_uppercase()),
+            Some(t) => {
+                let real = self
+                    .aliases
+                    .get(&t.to_uppercase())
+                    .map(|s| s.as_str())
+                    .unwrap_or(t);
+                format!("{}.{}", real.to_uppercase(), column.to_uppercase())
+            }
             None => {
                 let upper = column.to_uppercase();
                 let suffix = format!(".{upper}");

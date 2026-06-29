@@ -125,13 +125,14 @@ fn translate_from(from: &[TableRef], cte_map: &CteMap) -> Result<Relation, Trans
 
 fn translate_table_ref(tref: &TableRef, cte_map: &CteMap) -> Result<Relation, TranslateError> {
     match tref {
-        TableRef::Table { name, .. } => {
+        TableRef::Table { name, alias, .. } => {
             let table_name = name.join(".");
             if let Some(cte_rel) = cte_map.get(&table_name.to_lowercase()) {
                 return Ok(cte_rel.clone());
             }
             Ok(Relation::BaseTable {
                 name: table_name.clone(),
+                alias: alias.as_ref().map(|a| a.to_string()),
                 columns: Vec::new(),
                 tuple_count: 0,
             })
