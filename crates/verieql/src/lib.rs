@@ -140,11 +140,9 @@ impl VeriEql {
 /// Walk the IR tree and register table aliases into the environment.
 fn register_aliases(env: &mut environment::Environment, rel: &ir::Relation) {
     match rel {
-        ir::Relation::BaseTable { name, alias, .. } => {
-            if let Some(a) = alias {
-                env.register_alias(a, name);
-            }
-        }
+        ir::Relation::BaseTable {
+            name, alias: Some(a), ..
+        } => env.register_alias(a, name),
         ir::Relation::Filter { input, .. }
         | ir::Relation::Project { input, .. }
         | ir::Relation::Distinct { input }
