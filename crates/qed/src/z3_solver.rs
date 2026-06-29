@@ -49,21 +49,33 @@ pub fn solve_equivalence(input: &QedInput) -> Result<ProofResult, ProverError> {
         .map(|i| Int::new_const(format!("out_{i}")))
         .collect();
 
-    let q1 = encode_relation(&input.queries[0], &output_vars, &schema_map, &table_funcs)?;
-    let q2 = encode_relation(&input.queries[1], &output_vars, &schema_map, &table_funcs)?;
+    let result = (|| -> Result<ProofResult, ProverError> {
+        let q1 = encode_relation(&input.queries[0], &output_vars, &schema_map, &table_funcs)?;
+        let q2 = encode_relation(&input.queries[1], &output_vars, &schema_map, &table_funcs)?;
 
-    let solver = Solver::new();
-    solver.assert(q1.eq(&q2).not());
+        let solver = Solver::new();
+        solver.assert(q1.eq(&q2).not());
 
-    match solver.check() {
-        SatResult::Unsat => Ok(ProofResult::Equivalent),
-        SatResult::Sat => {
-            let ce = solver.get_model().map(|m| format!("{m}"));
-            Ok(ProofResult::NotEquivalent { counterexample: ce })
+        match solver.check() {
+            SatResult::Unsat => Ok(ProofResult::Equivalent),
+            SatResult::Sat => {
+                let ce = solver.get_model().map(|m| format!("{m}"));
+                Ok(ProofResult::NotEquivalent { counterexample: ce })
+            }
+            SatResult::Unknown => Ok(ProofResult::Unknown {
+                reason: "Z3 solver returned Unknown".to_string(),
+            }),
         }
-        SatResult::Unknown => Ok(ProofResult::Unknown {
-            reason: "Z3 solver returned Unknown".to_string(),
-        }),
+    })();
+
+    match result {
+        Ok(proof) => Ok(proof),
+        Err(ProverError::Io(msg))
+            if msg.contains("DISTINCT") || msg.contains("quantified") =>
+        {
+            Ok(ProofResult::Unknown { reason: msg })
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -164,8 +176,11 @@ fn encode_relation(
             let r = encode_relation(right, output_vars, schemas, table_funcs)?;
             Ok(Bool::and(&[&l, &r.not()]))
         }
-        QedRelation::Distinct { input } => {
-            encode_relation(input, output_vars, schemas, table_funcs)
+        QedRelation::Distinct { input: _ } => {
+            tracing::warn!("Distinct relation cannot be soundly encoded in set-based Z3 encoding; returning error");
+            return Err(ProverError::Io(
+                "DISTINCT cannot be soundly encoded: set-based membership predicates do not track multiplicity".into(),
+            ));
         }
         QedRelation::Values { rows } => encode_values(rows, output_vars),
         QedRelation::Aggregate { .. } => encode_uninterpreted("agg", output_vars),
