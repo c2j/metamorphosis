@@ -638,7 +638,7 @@ impl<'a> AstTranslator<'a> {
         let outer_qed = self.translate_expr(outer_expr, outer_scope)?;
 
         // Build conditions with correlation + IN pair.
-        let (inner, mut conditions) = match subquery.where_clause.as_ref() {
+        let (inner, conditions) = match subquery.where_clause.as_ref() {
             None => {
                 // No WHERE clause: IN subquery without correlation
                 // The join condition is just outer_expr = subquery_first_col

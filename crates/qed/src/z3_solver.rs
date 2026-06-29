@@ -136,6 +136,43 @@ fn compute_output_arity(
     }
 }
 
+/// Check if a Distinct wrapper is provably a no-op: the input relation's
+/// output columns include a unique key from the underlying table.
+fn distinct_is_noop(
+    input: &QedRelation,
+    schemas: &HashMap<String, QedSchema>,
+) -> bool {
+    match input {
+        QedRelation::Join { left, right, .. } => {
+            distinct_is_noop(left, schemas) && distinct_is_noop(right, schemas)
+        }
+        QedRelation::Scan { table, fields } => {
+            let schema = match schemas.get(table) {
+                Some(s) => s,
+                None => return false,
+            };
+            if schema.key.is_empty() {
+                return false;
+            }
+            if fields.is_empty() {
+                // All columns selected — PK columns are included
+                true
+            } else {
+                // Check if any PK column is in the selected fields
+                schema.key.iter().any(|k| fields.contains(k))
+            }
+        }
+        QedRelation::Filter { input, .. } | QedRelation::QOp { input, .. } => {
+            distinct_is_noop(input, schemas)
+        }
+        QedRelation::Project { input, .. } => {
+            // Project preserves uniqueness if input has a unique output
+            distinct_is_noop(input, schemas)
+        }
+        _ => false,
+    }
+}
+
 fn encode_relation(
     rel: &QedRelation,
     output_vars: &[Int],
@@ -176,11 +213,16 @@ fn encode_relation(
             let r = encode_relation(right, output_vars, schemas, table_funcs)?;
             Ok(Bool::and(&[&l, &r.not()]))
         }
-        QedRelation::Distinct { input: _ } => {
-            tracing::warn!("Distinct relation cannot be soundly encoded in set-based Z3 encoding; returning error");
-            Err(ProverError::Io(
-                "DISTINCT cannot be soundly encoded: set-based membership predicates do not track multiplicity".into(),
-            ))
+        QedRelation::Distinct { input } => {
+            if distinct_is_noop(input, schemas) {
+                tracing::debug!("Distinct is provably a no-op (PK/unique guarantee); encoding as passthrough");
+                encode_relation(input, output_vars, schemas, table_funcs)
+            } else {
+                tracing::warn!("Distinct cannot be soundly encoded without uniqueness guarantee; returning error");
+                Err(ProverError::Io(
+                    "DISTINCT cannot be soundly encoded: no uniqueness guarantee on output columns".into(),
+                ))
+            }
         }
         QedRelation::Values { rows } => encode_values(rows, output_vars),
         QedRelation::Aggregate { .. } => encode_uninterpreted("agg", output_vars),
