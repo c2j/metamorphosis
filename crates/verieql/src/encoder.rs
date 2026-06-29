@@ -28,7 +28,18 @@ pub fn encode_relation_for_tuple(
             let cond = encode_expr_bool(predicate, output_tuple, env)?;
             Ok(Bool::and(&[&inner, &cond]))
         }
-        Relation::Project { input, .. } => encode_relation_for_tuple(input, output_tuple, env),
+        Relation::Project {
+            input,
+            distinct,
+            ..
+        } => {
+            if *distinct {
+                return Err(EncodeError::UnsupportedRelation(
+                    "Project { distinct: true } not yet supported".into(),
+                ));
+            }
+            encode_relation_for_tuple(input, output_tuple, env)
+        }
         Relation::Join {
             left,
             right,
@@ -92,7 +103,10 @@ pub fn encode_expr_int(
             let v = encode_expr_int(inner, tuple, env)?;
             Ok(Int::sub(&[&Int::from_i64(0), &v]))
         }
-        _ => Ok(Int::fresh_const("unimpl")),
+        _ => Err(EncodeError::UnsupportedExpr(format!(
+            "encode_expr_int: unsupported expression: {:?}",
+            expr
+        ))),
     }
 }
 
@@ -175,10 +189,10 @@ pub fn encode_expr_bool(
             }
         }
         Expr::Literal(ExprValue::Boolean(v)) => Ok(Bool::from_bool(*v)),
-        _ => {
-            tracing::warn!("unimplemented bool expr, returning fresh const");
-            Ok(Bool::fresh_const("unimpl_bool"))
-        }
+        _ => Err(EncodeError::UnsupportedExpr(format!(
+            "encode_expr_bool: unsupported expression: {:?}",
+            expr
+        ))),
     }
 }
 
