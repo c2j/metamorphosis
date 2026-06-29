@@ -348,8 +348,11 @@ fn encode_expr(expr: &QedExpr, vars: &[Int]) -> Result<Dynamic, ProverError> {
             Ok(Dynamic::from(Int::fresh_const("fn")))
         }
         QedExpr::Quantified { .. } => {
-            tracing::warn!("quantified expression -> fresh variable");
-            Ok(Dynamic::from(Int::fresh_const("qnt")))
+            tracing::warn!("quantified expression cannot be soundly encoded");
+            Err(ProverError::Io(
+                "quantified expression (IN/EXISTS subquery) not supported in Z3 encoding; \
+                 decorrelation should have handled this".into(),
+            ))
         }
     }
 }
