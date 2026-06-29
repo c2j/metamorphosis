@@ -16,11 +16,50 @@ use metamorphosis_verieql::types::*;
 use metamorphosis_verieql::VeriEql;
 use ogsql_parser::ast::Statement;
 use ogsql_parser::{ParseOptions, Parser};
+use serde::Deserialize;
 
 /// Available verification engines.
 pub enum Engine {
     Qed,
     Verieql,
+}
+
+/// A table's schema entry in JSON — supports both legacy and new formats.
+///
+/// # Legacy format (backward compatible)
+/// `{"id": "INTEGER", "name": "VARCHAR(100)"}`
+///
+/// # New format (with primary key)
+/// `{"columns": {"id": "INTEGER", "name": "VARCHAR(100)"}, "primary_key": ["id"]}`
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TableSchemaEntry {
+    /// Legacy flat format: column names mapped to type strings.
+    Legacy(std::collections::HashMap<String, String>),
+    /// New structured format with optional primary key declaration.
+    Structured {
+        columns: std::collections::HashMap<String, String>,
+        #[serde(default)]
+        primary_key: Vec<String>,
+    },
+}
+
+impl TableSchemaEntry {
+    /// Returns the column-to-type map regardless of format.
+    fn columns(&self) -> &std::collections::HashMap<String, String> {
+        match self {
+            Self::Legacy(cols) => cols,
+            Self::Structured { columns, .. } => columns,
+        }
+    }
+
+    /// Returns the primary key columns (empty for legacy format).
+    fn primary_key(&self) -> &[String] {
+        match self {
+            Self::Legacy(_) => &[],
+            Self::Structured { primary_key, .. } => primary_key,
+        }
+    }
 }
 
 // ── Public entrypoint ────────────────────────────────────────────────────
@@ -167,15 +206,40 @@ fn load_verieql_schema(schema_path: Option<PathBuf>, sql_dir: Option<PathBuf>) -
     }
 }
 
+/// Build DDL statements from schema entries, including `PRIMARY KEY` clauses
+/// when primary key info is present (new JSON format).
+fn schema_entries_to_ddl(
+    schema: &std::collections::HashMap<String, TableSchemaEntry>,
+) -> String {
+    let mut ddl = String::new();
+    for (table_name, entry) in schema {
+        ddl.push_str("CREATE TABLE ");
+        ddl.push_str(table_name);
+        ddl.push_str(" (");
+        let mut defs: Vec<String> = entry
+            .columns()
+            .iter()
+            .map(|(name, typ)| format!("{} {}", name, typ.to_uppercase()))
+            .collect();
+        let pk = entry.primary_key();
+        if !pk.is_empty() {
+            defs.push(format!("PRIMARY KEY ({})", pk.join(", ")));
+        }
+        ddl.push_str(&defs.join(", "));
+        ddl.push_str(");\n");
+    }
+    ddl
+}
+
 /// Build a [`RichSchema`] from a JSON schema file.
 ///
-/// The JSON is expected to be a map of table names to column maps
-/// (same format as `--schema` for `rewrite`/`suggest`). We synthesize
-/// DDL from the map, parse it, and extract the rich schema.
+/// Supports both legacy format (`{"table": {"col": "type"}}`) and the new
+/// format (`{"table": {"columns": {...}, "primary_key": [...]}}`) with
+/// primary key declarations.
 fn load_schema_from_json(path: PathBuf) -> RichSchema {
     let content = read_file(&path);
 
-    let schema_map: std::collections::HashMap<String, std::collections::HashMap<String, String>> =
+    let schema_map: std::collections::HashMap<String, TableSchemaEntry> =
         serde_json::from_str(&content).unwrap_or_else(|e| {
             eprintln!("Error: invalid schema JSON '{}': {}", path.display(), e);
             std::process::exit(1);
@@ -186,20 +250,7 @@ fn load_schema_from_json(path: PathBuf) -> RichSchema {
         std::process::exit(1);
     }
 
-    // Build DDL statements from the schema map
-    let mut ddl = String::new();
-    for (table_name, columns) in &schema_map {
-        ddl.push_str("CREATE TABLE ");
-        ddl.push_str(table_name);
-        ddl.push_str(" (");
-        let col_defs: Vec<String> = columns
-            .iter()
-            .map(|(name, typ)| format!("{} {}", name, typ.to_uppercase()))
-            .collect();
-        ddl.push_str(&col_defs.join(", "));
-        ddl.push_str(");\n");
-    }
-
+    let ddl = schema_entries_to_ddl(&schema_map);
     parse_and_extract(&ddl)
 }
 
@@ -273,7 +324,7 @@ fn parse_and_extract(ddl: &str) -> RichSchema {
 fn load_verieql_schema_from_json(path: PathBuf) -> Vec<TableSchema> {
     let content = read_file(&path);
 
-    let schema_map: std::collections::HashMap<String, std::collections::HashMap<String, String>> =
+    let schema_map: std::collections::HashMap<String, TableSchemaEntry> =
         serde_json::from_str(&content).unwrap_or_else(|e| {
             eprintln!("Error: invalid schema JSON '{}': {}", path.display(), e);
             std::process::exit(1);
@@ -293,12 +344,13 @@ fn load_verieql_schema_from_dir(dir: PathBuf) -> Vec<TableSchema> {
 }
 
 fn schema_map_to_verieql(
-    map: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    map: &std::collections::HashMap<String, TableSchemaEntry>,
 ) -> Vec<TableSchema> {
     map.iter()
-        .map(|(table_name, columns)| TableSchema {
+        .map(|(table_name, entry)| TableSchema {
             name: table_name.clone(),
-            columns: columns
+            columns: entry
+                .columns()
                 .iter()
                 .map(|(col_name, col_type)| ColumnDef {
                     name: col_name.clone(),
