@@ -387,9 +387,10 @@ fn test_correlated_exists_decorrelated_to_distinct_join() {
     }
 }
 
-/// Non-correlated EXISTS must fall back to Filter(Quantified) (no degradation).
+/// Non-correlated EXISTS must decorrelate to Distinct(Join(...)) instead of falling back
+/// to Quantified expression (which cannot be soundly encoded).
 #[test]
-fn test_non_correlated_exists_falls_back_to_quantified() {
+fn test_non_correlated_exists_decorrelates() {
     let schema = decorrelation_schema();
     let rel = translate_sql(
         "SELECT user_id FROM orders \
@@ -400,13 +401,44 @@ fn test_non_correlated_exists_falls_back_to_quantified() {
 
     match &rel {
         QedRelation::Project { input, .. } => match input.as_ref() {
-            QedRelation::Filter { condition, .. } => {
+            QedRelation::Distinct { input: inner } => {
                 assert!(
-                    matches!(condition, QedExpr::Quantified { .. }),
-                    "non-correlated EXISTS should stay as Quantified, got: {condition:?}"
+                    matches!(&**inner, QedRelation::Join { .. }),
+                    "non-correlated EXISTS should decorrelate to Distinct(Join), got: {inner:?}"
+                );
+                // Verify the join has a condition (cross join)
+                let join = match inner.as_ref() {
+                    QedRelation::Join { condition, .. } => condition,
+                    _ => unreachable!(),
+                };
+                // condition should be None (uncorrelated = cross join semantics)
+                assert!(join.is_none(), "uncorrelated EXISTS join should have no condition");
+            }
+            _ => panic!("expected Distinct(Join), got: {input:?}"),
+        },
+        _ => panic!("expected Project at root, got: {rel:?}"),
+    }
+}
+
+/// EXISTS without WHERE clause must decorrelate to Distinct(Join(outer, inner, None)).
+#[test]
+fn test_exists_without_where_decorrelates() {
+    let schema = decorrelation_schema();
+    let rel = translate_sql(
+        "SELECT o.order_id FROM orders o WHERE EXISTS (SELECT 1 FROM users)",
+        &schema,
+    )
+    .unwrap();
+
+    match &rel {
+        QedRelation::Project { input, .. } => match input.as_ref() {
+            QedRelation::Distinct { input: inner } => {
+                assert!(
+                    matches!(&**inner, QedRelation::Join { .. }),
+                    "EXISTS without WHERE should decorrelate to Distinct(Join), got: {inner:?}"
                 );
             }
-            _ => panic!("expected Filter with Quantified, got: {input:?}"),
+            _ => panic!("expected Distinct(Join), got: {input:?}"),
         },
         _ => panic!("expected Project at root, got: {rel:?}"),
     }

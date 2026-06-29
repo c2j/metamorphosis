@@ -111,6 +111,20 @@ impl ColumnScope {
             .collect();
         if matches.len() == 1 {
             Some(matches[0])
+        } else if table_alias.is_none() {
+            // Fall back to unqualified resolution (same as resolve())
+            let unqualified: Vec<usize> = self
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, col))| col == &lower)
+                .map(|(i, _)| i)
+                .collect();
+            if unqualified.len() == 1 {
+                Some(unqualified[0])
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -520,40 +534,53 @@ impl<'a> AstTranslator<'a> {
         let inner_scope = self.build_scope_from(&subquery.from)?;
         let inner_rel = self.translate_from(&subquery.from)?;
 
-        let wc = subquery
-            .where_clause
-            .as_ref()
-            .ok_or_else(|| TranslateError::UnsupportedExpr("EXISTS without WHERE".into()))?;
-        let corr = collect_correlation_preds(wc, outer_scope, &inner_scope)?;
-        if corr.pairs.is_empty() {
-            return Err(TranslateError::UnsupportedExpr(
-                "no correlation predicates found".into(),
-            ));
-        }
-
         let outer_arity = outer_scope.len();
-        let conditions: Vec<QedExpr> = corr
-            .pairs
-            .iter()
-            .map(|(oi, ii)| QedExpr::BinOp {
-                op: "eq".to_string(),
-                left: Box::new(QedExpr::ColumnRef { index: *oi }),
-                right: Box::new(QedExpr::ColumnRef {
-                    index: outer_arity + *ii,
-                }),
-            })
-            .collect();
 
-        let mut inner = inner_rel;
-        if let Some(residual) = corr.residual {
-            let residual_expr = self.translate_expr(&residual, &inner_scope)?;
-            inner = QedRelation::Filter {
-                condition: residual_expr,
-                input: Box::new(inner),
-            };
-        }
+        // Handle no WHERE clause: uncorrelated EXISTS
+        // EXISTS(SELECT 1 FROM t) is true if t has any rows → cross join + DISTINCT
+        let (inner, conditions) = match subquery.where_clause.as_ref() {
+            None => {
+                return Ok(QedRelation::Distinct {
+                    input: Box::new(QedRelation::Join {
+                        left: Box::new(outer_rel),
+                        right: Box::new(inner_rel),
+                        condition: None,
+                    }),
+                });
+            }
+            Some(wc) => {
+                let corr = collect_correlation_preds(wc, outer_scope, &inner_scope)
+                    .unwrap_or(CorrelationResult { pairs: Vec::new(), residual: None });
 
-        let join_condition = if conditions.len() == 1 {
+                let conditions: Vec<QedExpr> = corr
+                    .pairs
+                    .iter()
+                    .map(|(oi, ii)| QedExpr::BinOp {
+                        op: "eq".to_string(),
+                        left: Box::new(QedExpr::ColumnRef { index: *oi }),
+                        right: Box::new(QedExpr::ColumnRef {
+                            index: outer_arity + *ii,
+                        }),
+                    })
+                    .collect();
+
+                let inner = if let Some(residual) = corr.residual {
+                    let residual_expr = self.translate_expr(&residual, &inner_scope)?;
+                    QedRelation::Filter {
+                        condition: residual_expr,
+                        input: Box::new(inner_rel),
+                    }
+                } else {
+                    inner_rel
+                };
+
+                (inner, conditions)
+            }
+        };
+
+        let join_condition = if conditions.is_empty() {
+            None
+        } else if conditions.len() == 1 {
             Some(conditions.into_iter().next().expect("non-empty"))
         } else {
             Some(
@@ -610,47 +637,65 @@ impl<'a> AstTranslator<'a> {
         // Translate the outer expression within the outer scope.
         let outer_qed = self.translate_expr(outer_expr, outer_scope)?;
 
-        // Collect correlation predicates (same as EXISTS).
-        let wc = subquery
-            .where_clause
-            .as_ref()
-            .ok_or_else(|| TranslateError::UnsupportedExpr("IN without WHERE".into()))?;
-        let corr = collect_correlation_preds(wc, outer_scope, &inner_scope)?;
-        if corr.pairs.is_empty() {
-            return Err(TranslateError::UnsupportedExpr(
-                "no correlation predicates found".into(),
-            ));
-        }
+        // Build conditions with correlation + IN pair.
+        let (inner, mut conditions) = match subquery.where_clause.as_ref() {
+            None => {
+                // No WHERE clause: IN subquery without correlation
+                // The join condition is just outer_expr = subquery_first_col
+                let conditions = vec![QedExpr::BinOp {
+                    op: "eq".to_string(),
+                    left: Box::new(outer_qed),
+                    right: Box::new(QedExpr::ColumnRef {
+                        index: outer_arity + inner_first_col,
+                    }),
+                }];
+                let join = QedRelation::Join {
+                    left: Box::new(outer_rel),
+                    right: Box::new(inner_rel),
+                    condition: Some(conditions.into_iter().next().expect("non-empty")),
+                };
+                return Ok(QedRelation::Distinct {
+                    input: Box::new(join),
+                });
+            }
+            Some(wc) => {
+                let corr = collect_correlation_preds(wc, outer_scope, &inner_scope)
+                    .unwrap_or(CorrelationResult { pairs: Vec::new(), residual: None });
 
-        let mut conditions: Vec<QedExpr> = corr
-            .pairs
-            .iter()
-            .map(|(oi, ii)| QedExpr::BinOp {
-                op: "eq".to_string(),
-                left: Box::new(QedExpr::ColumnRef { index: *oi }),
-                right: Box::new(QedExpr::ColumnRef {
-                    index: outer_arity + *ii,
-                }),
-            })
-            .collect();
+                let mut conditions: Vec<QedExpr> = corr
+                    .pairs
+                    .iter()
+                    .map(|(oi, ii)| QedExpr::BinOp {
+                        op: "eq".to_string(),
+                        left: Box::new(QedExpr::ColumnRef { index: *oi }),
+                        right: Box::new(QedExpr::ColumnRef {
+                            index: outer_arity + *ii,
+                        }),
+                    })
+                    .collect();
 
-        // Add the IN expression pairing: outer_expr = subquery_first_col
-        conditions.push(QedExpr::BinOp {
-            op: "eq".to_string(),
-            left: Box::new(outer_qed),
-            right: Box::new(QedExpr::ColumnRef {
-                index: outer_arity + inner_first_col,
-            }),
-        });
+                // Add the IN expression pairing: outer_expr = subquery_first_col
+                conditions.push(QedExpr::BinOp {
+                    op: "eq".to_string(),
+                    left: Box::new(outer_qed),
+                    right: Box::new(QedExpr::ColumnRef {
+                        index: outer_arity + inner_first_col,
+                    }),
+                });
 
-        let mut inner = inner_rel;
-        if let Some(residual) = corr.residual {
-            let residual_expr = self.translate_expr(&residual, &inner_scope)?;
-            inner = QedRelation::Filter {
-                condition: residual_expr,
-                input: Box::new(inner),
-            };
-        }
+                let inner = if let Some(residual) = corr.residual {
+                    let residual_expr = self.translate_expr(&residual, &inner_scope)?;
+                    QedRelation::Filter {
+                        condition: residual_expr,
+                        input: Box::new(inner_rel),
+                    }
+                } else {
+                    inner_rel
+                };
+
+                (inner, conditions)
+            }
+        };
 
         let join_condition = if conditions.len() == 1 {
             Some(conditions.into_iter().next().expect("non-empty"))
