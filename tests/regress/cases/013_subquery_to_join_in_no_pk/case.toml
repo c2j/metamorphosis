@@ -1,0 +1,13 @@
+name = "subquery_to_join_in_no_pk"
+description = "反例：WHERE user_id IN (SELECT id FROM users) 改写为 INNER JOIN，users.id 无 PK 约束时不等价——重复 id 导致 JOIN 行数膨胀（NE-002）"
+rule = "subquery-to-join"
+
+[verify]
+enabled = true
+engine = "verieql"
+expect = "not-equivalent"
+
+[db]
+enabled = true
+compare = "unordered"
+expect = "mismatch"

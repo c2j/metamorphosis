@@ -189,8 +189,6 @@ pub fn encode_expr_bool(
             }
         }
         Expr::Exists(subquery) => {
-            // EXISTS(subquery) is true if at least one concrete tuple
-            // satisfies the subquery relation.
             let tuples = env.all_table_tuples();
             let mut any = Bool::from_bool(false);
             for sub_tuple in tuples {
@@ -198,6 +196,55 @@ pub fn encode_expr_bool(
                 any = Bool::or(&[&any, &pred]);
             }
             Ok(any)
+        }
+        Expr::InSubquery {
+            expr: lhs,
+            subquery,
+            negated,
+        } => {
+            let sub_output = match subquery.as_ref() {
+                Relation::Project {
+                    exprs, distinct, ..
+                } => {
+                    if *distinct {
+                        return Err(EncodeError::UnsupportedRelation(
+                            "InSubquery: DISTINCT subquery not supported".into(),
+                        ));
+                    }
+                    match &exprs[0] {
+                        ProjectExpr::Column(e) => e,
+                        ProjectExpr::Aggregate(_) => {
+                            return Err(EncodeError::UnsupportedExpr(
+                                "InSubquery: aggregate subquery output not supported".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(EncodeError::UnsupportedExpr(
+                        "InSubquery: subquery must be a Project".into(),
+                    ));
+                }
+            };
+
+            let tuples = env.all_table_tuples();
+            let mut any = Bool::from_bool(false);
+            for sub_tuple in tuples {
+                let in_relation =
+                    encode_relation_for_tuple(subquery, sub_tuple, env)?;
+                let lhs_val = encode_expr_int(lhs, tuple, env)?;
+                let rhs_val = encode_expr_int(sub_output, sub_tuple, env)?;
+                any = Bool::or(&[
+                    &any,
+                    &Bool::and(&[&in_relation, &lhs_val.eq(&rhs_val)]),
+                ]);
+            }
+
+            if *negated {
+                Ok(any.not())
+            } else {
+                Ok(any)
+            }
         }
         Expr::Literal(ExprValue::Boolean(v)) => Ok(Bool::from_bool(*v)),
         _ => Err(EncodeError::UnsupportedExpr(format!(
