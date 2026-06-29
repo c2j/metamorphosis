@@ -188,18 +188,19 @@ fn test_qualified_schema_names() {
 }
 
 #[test]
-fn test_exists_to_join_is_provable() {
-    // Non-correlated pattern: EXISTS with independent subquery condition
-    // (translator limitation: correlated subqueries not yet supported)
+fn test_exists_to_distinct_join_equivalent() {
+    // EXISTS subquery → DISTINCT JOIN (both sides on PK schema should be Equivalent)
     let ddl = parse_ddl(
         "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, amount NUMERIC); CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL)",
     );
     let schema = extract_rich_schema(&ddl);
 
-    let original =
-        parse_single("SELECT order_id, user_id FROM orders o JOIN users u ON o.user_id = u.id");
-    let rewritten =
-        parse_single("SELECT order_id, user_id FROM orders o JOIN users u ON o.user_id = u.id");
+    let original = parse_single(
+        "SELECT o.order_id FROM orders o WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = o.user_id)",
+    );
+    let rewritten = parse_single(
+        "SELECT DISTINCT o.order_id FROM orders o JOIN users u ON u.id = o.user_id",
+    );
 
     let result = verify_rewrite(
         "exists-to-join",
@@ -212,7 +213,7 @@ fn test_exists_to_join_is_provable() {
     match result {
         Ok(vr) => assert!(
             matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
-            "Expected Equivalent for EXISTS→JOIN, got: {:?}",
+            "Expected Equivalent for EXISTS→DISTINCT JOIN, got: {:?}",
             vr.proof
         ),
         Err(e) => panic!("Prover failed: {e}"),
@@ -220,17 +221,17 @@ fn test_exists_to_join_is_provable() {
 }
 
 #[test]
-fn test_in_subquery_to_join_is_provable() {
+fn test_in_subquery_to_distinct_join_equivalent() {
     let ddl = parse_ddl(
         "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL); CREATE TABLE active_users (id INTEGER PRIMARY KEY)",
     );
     let schema = extract_rich_schema(&ddl);
 
     let original = parse_single(
-        "SELECT order_id, user_id FROM orders o JOIN active_users a ON o.user_id = a.id",
+        "SELECT o.order_id FROM orders o WHERE o.user_id IN (SELECT id FROM active_users)",
     );
     let rewritten = parse_single(
-        "SELECT order_id, user_id FROM orders o JOIN active_users a ON o.user_id = a.id",
+        "SELECT DISTINCT o.order_id FROM orders o JOIN active_users a ON o.user_id = a.id",
     );
 
     let result = verify_rewrite(
@@ -244,7 +245,7 @@ fn test_in_subquery_to_join_is_provable() {
     match result {
         Ok(vr) => assert!(
             matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
-            "Expected Equivalent for IN→JOIN, got: {:?}",
+            "Expected Equivalent for IN→DISTINCT JOIN, got: {:?}",
             vr.proof
         ),
         Err(e) => panic!("Prover failed: {e}"),
@@ -252,21 +253,23 @@ fn test_in_subquery_to_join_is_provable() {
 }
 
 #[test]
-fn test_not_exists_to_join_is_provable() {
+fn test_not_exists_identity_pk() {
+    // NOT EXISTS identity test: QED translator handles uncorrelated NOT EXISTS
+    // (no LEFT JOIN equivalent yet - translator ignores LEFT JOIN type)
     let ddl = parse_ddl(
         "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL); CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL)",
     );
     let schema = extract_rich_schema(&ddl);
 
     let original = parse_single(
-        "SELECT order_id, user_id FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE u.id IS NULL",
+        "SELECT o.order_id FROM orders o WHERE NOT EXISTS (SELECT 1 FROM users)",
     );
     let rewritten = parse_single(
-        "SELECT order_id, user_id FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE u.id IS NULL",
+        "SELECT o.order_id FROM orders o WHERE NOT EXISTS (SELECT 1 FROM users)",
     );
 
     let result = verify_rewrite(
-        "not-exists-to-join",
+        "not-exists-identity",
         &original,
         &rewritten,
         &schema,
@@ -276,7 +279,7 @@ fn test_not_exists_to_join_is_provable() {
     match result {
         Ok(vr) => assert!(
             matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
-            "Expected Equivalent for NOT EXISTS→JOIN, got: {:?}",
+            "Expected Equivalent for NOT EXISTS identity, got: {:?}",
             vr.proof
         ),
         Err(e) => panic!("Prover failed: {e}"),
@@ -284,21 +287,22 @@ fn test_not_exists_to_join_is_provable() {
 }
 
 #[test]
-fn test_not_in_to_join_is_provable() {
+fn test_not_in_identity_pk() {
+    // NOT IN identity test: QED translator handles uncorrelated NOT IN
     let ddl = parse_ddl(
         "CREATE TABLE orders (order_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL); CREATE TABLE active_users (id INTEGER PRIMARY KEY)",
     );
     let schema = extract_rich_schema(&ddl);
 
     let original = parse_single(
-        "SELECT order_id, user_id FROM orders o LEFT JOIN active_users a ON o.user_id = a.id WHERE a.id IS NULL",
+        "SELECT o.order_id FROM orders o WHERE o.user_id NOT IN (SELECT id FROM active_users)",
     );
     let rewritten = parse_single(
-        "SELECT order_id, user_id FROM orders o LEFT JOIN active_users a ON o.user_id = a.id WHERE a.id IS NULL",
+        "SELECT o.order_id FROM orders o WHERE o.user_id NOT IN (SELECT id FROM active_users)",
     );
 
     let result = verify_rewrite(
-        "not-in-to-join",
+        "not-in-identity",
         &original,
         &rewritten,
         &schema,
@@ -308,7 +312,7 @@ fn test_not_in_to_join_is_provable() {
     match result {
         Ok(vr) => assert!(
             matches!(vr.proof, metamorphosis_qed::prover::ProofResult::Equivalent),
-            "Expected Equivalent for NOT IN→JOIN, got: {:?}",
+            "Expected Equivalent for NOT IN identity, got: {:?}",
             vr.proof
         ),
         Err(e) => panic!("Prover failed: {e}"),
