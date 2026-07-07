@@ -728,12 +728,13 @@ fn substitute_expr(
             builtin: builtin.clone(),
         },
 
-        Expr::SpecialFunction { name, args } => Expr::SpecialFunction {
+        Expr::SpecialFunction { name, args, .. } => Expr::SpecialFunction {
             name: name.clone(),
             args: args
                 .iter()
                 .map(|a| substitute_expr(a, params, known_vars, pos_counter, stats))
                 .collect(),
+            builtin: None,
         },
 
         Expr::Case {

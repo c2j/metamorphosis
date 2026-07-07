@@ -1067,7 +1067,7 @@ impl<'a> AstTranslator<'a> {
                     .map(|a| self.translate_expr(a, scope))
                     .collect::<Result<Vec<_>, _>>()?,
             }),
-            Expr::SpecialFunction { name, args } => Ok(QedExpr::Function {
+            Expr::SpecialFunction { name, args, .. } => Ok(QedExpr::Function {
                 name: name.to_lowercase(),
                 args: args
                     .iter()
