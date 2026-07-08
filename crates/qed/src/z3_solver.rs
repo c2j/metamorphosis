@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Mul, Sub};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use z3::ast::{self, Ast, Bool, Dynamic, Int};
 use z3::{FuncDecl, SatResult, Solver, Sort};
@@ -49,7 +50,7 @@ pub fn solve_equivalence(input: &QedInput) -> Result<ProofResult, ProverError> {
         .map(|i| Int::new_const(format!("out_{i}")))
         .collect();
 
-    let result = (|| -> Result<ProofResult, ProverError> {
+    let result = match catch_unwind(AssertUnwindSafe(|| -> Result<ProofResult, ProverError> {
         let q1 = encode_relation(&input.queries[0], &output_vars, &schema_map, &table_funcs)?;
         let q2 = encode_relation(&input.queries[1], &output_vars, &schema_map, &table_funcs)?;
 
@@ -66,8 +67,21 @@ pub fn solve_equivalence(input: &QedInput) -> Result<ProofResult, ProverError> {
                 reason: "Z3 solver returned Unknown".to_string(),
             }),
         }
-    })();
-
+    })) {
+        Ok(inner) => inner,
+        Err(payload) => {
+            let reason = format!(
+                "Z3 encoding panicked: {}",
+                payload
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic")
+            );
+            tracing::warn!("{reason}");
+            Ok(ProofResult::Unknown { reason })
+        }
+    };
     match result {
         Ok(proof) => Ok(proof),
         Err(ProverError::Io(msg)) if msg.contains("DISTINCT") || msg.contains("quantified") => {
@@ -287,6 +301,7 @@ fn encode_project(
     let mut parts: Vec<Bool> = vec![input_f];
     for (i, expr) in exprs.iter().enumerate() {
         let val = encode_expr(expr, &iv)?;
+        let val = coerce_bool_to_int(&val);
         parts.push(Dynamic::from(output_vars[i].clone()).eq(&val));
     }
     make_exists(&iv, &Bool::and(&parts))
@@ -326,6 +341,7 @@ fn encode_values(rows: &[Vec<QedExpr>], output_vars: &[Int]) -> Result<Bool, Pro
                 .enumerate()
                 .map(|(i, expr)| {
                     let val = encode_expr(expr, output_vars)?;
+                    let val = coerce_bool_to_int(&val);
                     Ok(Dynamic::from(output_vars[i].clone()).eq(&val))
                 })
                 .collect();
@@ -400,8 +416,14 @@ fn encode_expr(expr: &QedExpr, vars: &[Int]) -> Result<Dynamic, ProverError> {
 
 fn encode_binop(op: &str, left: &Dynamic, right: &Dynamic) -> Result<Dynamic, ProverError> {
     match op {
-        "eq" => Ok(Dynamic::from(left.eq(right))),
-        "neq" => Ok(Dynamic::from(left.eq(right).not())),
+        "eq" => {
+            let (l, r) = unify_eq_sorts(left, right)?;
+            Ok(Dynamic::from(l.eq(&r)))
+        }
+        "neq" => {
+            let (l, r) = unify_eq_sorts(left, right)?;
+            Ok(Dynamic::from(l.eq(&r).not()))
+        }
         "and" => {
             let l = left
                 .as_bool()
@@ -468,4 +490,33 @@ fn make_exists(vars: &[Int], body: &Bool) -> Result<Bool, ProverError> {
     }
     let bounds: Vec<&dyn Ast> = vars.iter().map(|v| v as &dyn Ast).collect();
     Ok(ast::exists_const(&bounds, &[], body))
+}
+
+/// Coerce a Bool-sorted [`Dynamic`] to `Int` via `ite(b, 1, 0)`.
+/// Non-Bool values pass through unchanged.
+/// Soundness: the mapping is a deterministic injection applied identically
+/// to both queries, so equivalence is preserved.
+fn coerce_bool_to_int(d: &Dynamic) -> Dynamic {
+    match d.as_bool() {
+        Some(b) => Dynamic::from(b.ite(&Int::from_i64(1), &Int::from_i64(0))),
+        None => d.clone(),
+    }
+}
+
+/// Align sorts for `eq`/`neq`: coerce the Bool side to `Int` if sorts differ.
+fn unify_eq_sorts(left: &Dynamic, right: &Dynamic) -> Result<(Dynamic, Dynamic), ProverError> {
+    if left.sort_kind() == right.sort_kind() {
+        return Ok((left.clone(), right.clone()));
+    }
+    let l = coerce_bool_to_int(left);
+    let r = coerce_bool_to_int(right);
+    if l.sort_kind() == r.sort_kind() {
+        Ok((l, r))
+    } else {
+        Err(ProverError::Io(format!(
+            "eq/neq: cannot unify sorts {:?} vs {:?}",
+            left.sort_kind(),
+            right.sort_kind()
+        )))
+    }
 }

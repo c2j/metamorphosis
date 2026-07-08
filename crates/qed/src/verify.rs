@@ -466,4 +466,63 @@ mod tests {
         let results = verify_batch("test", &[], &schema, &config);
         assert!(results.is_empty());
     }
+
+    #[test]
+    fn test_bool_projection_gt_equivalent() {
+        let ddl = parse_ddl("CREATE TABLE t (a INTEGER PRIMARY KEY, b INTEGER NOT NULL)");
+        let schema = crate::schema::extract_rich_schema(&ddl);
+        let config = ProverConfig::default();
+
+        let original = parse_single("SELECT a > 5 FROM t");
+        let rewritten = parse_single("SELECT a >= 6 FROM t");
+
+        let result = verify_rewrite("bool-proj-gt", &original, &rewritten, &schema, &config);
+        assert!(result.is_ok(), "Expected Ok, got: {result:?}");
+        let vr = result.unwrap();
+        assert!(
+            matches!(vr.proof, crate::prover::ProofResult::Equivalent),
+            "a > 5 vs a >= 6 (bool projection) should be Equivalent, got: {:?}",
+            vr.proof
+        );
+    }
+
+    #[test]
+    fn test_bool_eq_projection_equivalent() {
+        let ddl = parse_ddl("CREATE TABLE t (a INTEGER PRIMARY KEY, b INTEGER NOT NULL)");
+        let schema = crate::schema::extract_rich_schema(&ddl);
+        let config = ProverConfig::default();
+
+        let original = parse_single("SELECT a = b FROM t");
+        let rewritten = parse_single("SELECT b = a FROM t");
+
+        let result = verify_rewrite("bool-proj-eq", &original, &rewritten, &schema, &config);
+        assert!(result.is_ok(), "Expected Ok, got: {result:?}");
+        let vr = result.unwrap();
+        assert!(
+            matches!(vr.proof, crate::prover::ProofResult::Equivalent),
+            "a = b vs b = a (bool projection) should be Equivalent, got: {:?}",
+            vr.proof
+        );
+    }
+
+    #[test]
+    fn test_substr_eq_vs_like_not_equivalent() {
+        let ddl = parse_ddl("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+        let schema = crate::schema::extract_rich_schema(&ddl);
+        let config = ProverConfig::default();
+
+        let sql_a = "SELECT substr('000000000000abxyzcd',1,17) = lpad('ab%cd',17,'0') FROM t";
+        let sql_b = "SELECT '000000000000abxyzcd' like lpad('ab%cd',17,'0') || '%' FROM t";
+        let original = parse_single(sql_a);
+        let rewritten = parse_single(sql_b);
+
+        let result = verify_rewrite("substr-eq-vs-like", &original, &rewritten, &schema, &config);
+        assert!(result.is_ok(), "Expected Ok, got: {result:?}");
+        let vr = result.unwrap();
+        assert!(
+            matches!(vr.proof, crate::prover::ProofResult::NotEquivalent { .. }),
+            "= vs LIKE should be NotEquivalent, got: {:?}",
+            vr.proof
+        );
+    }
 }
