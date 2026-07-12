@@ -100,7 +100,7 @@ pub fn extract_schema_from_dir(dir: &Path) -> Result<SchemaMap, ExtractionError>
     for path in &files {
         let path_str = path.display().to_string();
 
-        let content = match read_sql_file(&path) {
+        let content = match read_sql_file(path) {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!("Skipping '{}': ({})", path_str, e);
