@@ -17,8 +17,9 @@ use ogsql_parser::analyzer::schema::SchemaMap;
 use ogsql_parser::ast::{AlterTableAction, DataType, ObjectName, Statement};
 use ogsql_parser::{ParseOptions, Parser};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
+use walkdir::WalkDir;
 
 /// Errors that can occur during schema extraction.
 #[derive(Debug, Error)]
@@ -27,9 +28,9 @@ pub enum ExtractionError {
     #[error("schema directory not found: {0}")]
     DirNotFound(String),
 
-    /// Failed to read the directory listing.
-    #[error("failed to read schema directory '{0}': {1}")]
-    DirReadError(String, String),
+    /// Failed to walk a subdirectory when collecting SQL files.
+    #[error("failed to walk directory '{0}': {1}")]
+    WalkError(String, String),
 
     /// No `*.sql` files were found in the given directory.
     #[error("no .sql files found in schema directory: {0}")]
@@ -39,6 +40,41 @@ pub enum ExtractionError {
     /// no schema could be extracted.
     #[error("could not extract any schema from '{0}': all .sql files were skipped")]
     AllFilesSkipped(String),
+}
+
+/// Recursively collect all `*.sql` files under `dir`, sorted by full path.
+///
+/// Returns an error if the directory does not exist, is not a directory,
+/// contains no `.sql` files, or a subdirectory cannot be read.
+pub fn collect_sql_files(dir: &Path) -> Result<Vec<PathBuf>, ExtractionError> {
+    if !dir.exists() {
+        return Err(ExtractionError::DirNotFound(dir.display().to_string()));
+    }
+    if !dir.is_dir() {
+        return Err(ExtractionError::DirNotFound(dir.display().to_string()));
+    }
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    for entry in WalkDir::new(dir).sort_by_file_name() {
+        let entry = entry.map_err(|e| {
+            ExtractionError::WalkError(dir.display().to_string(), e.to_string())
+        })?;
+        if entry.file_type().is_file() {
+            if let Some(ext) = entry.path().extension() {
+                if ext.eq_ignore_ascii_case("sql") {
+                    files.push(entry.path().to_path_buf());
+                }
+            }
+        }
+    }
+
+    files.sort(); // stable cross-platform sort by full path
+
+    if files.is_empty() {
+        return Err(ExtractionError::NoSqlFiles(dir.display().to_string()));
+    }
+
+    Ok(files)
 }
 
 /// Extract a [`SchemaMap`] from all `*.sql` files in the given directory.
@@ -57,35 +93,12 @@ pub enum ExtractionError {
 /// If the same table appears in multiple `CREATE TABLE` statements, the
 /// last definition wins (supporting `DROP … CREATE` patterns).
 pub fn extract_schema_from_dir(dir: &Path) -> Result<SchemaMap, ExtractionError> {
-    if !dir.exists() {
-        return Err(ExtractionError::DirNotFound(dir.display().to_string()));
-    }
-    if !dir.is_dir() {
-        return Err(ExtractionError::DirNotFound(dir.display().to_string()));
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(dir)
-        .map_err(|e| ExtractionError::DirReadError(dir.display().to_string(), e.to_string()))?
-        .filter_map(|r| r.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext.eq_ignore_ascii_case("sql"))
-                .unwrap_or(false)
-        })
-        .collect();
-
-    entries.sort_by_key(|e| e.file_name());
-
-    if entries.is_empty() {
-        return Err(ExtractionError::NoSqlFiles(dir.display().to_string()));
-    }
+    let files = collect_sql_files(dir)?;
 
     let mut schema: SchemaMap = HashMap::new();
     let mut any_processed = false;
 
-    for entry in &entries {
-        let path = entry.path();
+    for path in &files {
         let path_str = path.display().to_string();
 
         let content = match read_sql_file(&path) {
@@ -150,7 +163,7 @@ pub fn extract_schema_from_dir(dir: &Path) -> Result<SchemaMap, ExtractionError>
             // just an empty schema.
             tracing::info!(
                 "Parsed {} file(s) but found no CREATE TABLE statements in '{}'",
-                entries.len(),
+                files.len(),
                 dir.display()
             );
         } else {
