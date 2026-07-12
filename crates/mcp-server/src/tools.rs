@@ -20,7 +20,7 @@ use std::path::Path;
 
 use metamorphosis_core::context::{RewriteConfig, RewriteContext};
 use metamorphosis_core::engine::RewriteEngine;
-use metamorphosis_core::extractor::extract_schema_from_dir;
+use metamorphosis_core::extractor::{collect_sql_files, extract_schema_from_dir};
 use metamorphosis_core::inline::{inline_statement, InlineParams, InlineValue};
 use metamorphosis_core::registry::RuleRegistry;
 use metamorphosis_core::types::{Confidence, RewriteAction, RuleCategory, SafetyLevel};
@@ -181,29 +181,16 @@ fn load_schema_ddl_with_pk(
     }
 
     if let Some(dir) = sql_dir {
-        // Read raw .sql files directly to preserve PRIMARY KEY clauses
-        let mut entries: Vec<_> = std::fs::read_dir(dir)
-            .map_err(|e| format!("cannot read sql_dir '{dir}': {e}"))?
-            .filter_map(|r| r.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext.eq_ignore_ascii_case("sql"))
-                    .unwrap_or(false)
-            })
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
+        let files = collect_sql_files(Path::new(dir))
+            .map_err(|e| format!("cannot read sql_dir '{dir}': {e}"))?;
         let mut ddl = String::new();
-        for entry in &entries {
-            let content = std::fs::read_to_string(entry.path())
-                .map_err(|e| format!("cannot read '{}': {e}", entry.path().display()))?;
+        for path in &files {
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| format!("cannot read '{}': {e}", path.display()))?;
             ddl.push_str(&content);
             if !ddl.ends_with('\n') {
                 ddl.push('\n');
             }
-        }
-        if ddl.is_empty() {
-            return Err(format!("no .sql files found in sql_dir '{dir}'"));
         }
         return Ok(ddl);
     }

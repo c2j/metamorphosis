@@ -591,22 +591,7 @@ impl ProvenanceIndex {
 }
 
 fn collect_sql_files(dir: &Path) -> Result<Vec<std::path::PathBuf>, String> {
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}", e))?;
-    let mut files = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("{}", e))?;
-        let path = entry.path();
-        if path.is_dir() {
-            continue;
-        }
-        if let Some(ext) = path.extension() {
-            if ext == "sql" {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    Ok(files)
+    metamorphosis_core::extractor::collect_sql_files(dir).map_err(|e| e.to_string())
 }
 
 fn analyze_procedure_file_silent(path: &Path) -> ProcedureAnalysis {
