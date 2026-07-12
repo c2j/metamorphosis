@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
+use metamorphosis_core::extractor::collect_sql_files;
 use metamorphosis_qed::prover::ProverConfig;
 use metamorphosis_qed::schema::{extract_rich_schema, RichSchema};
 use metamorphosis_qed::verify::{verify_rewrite, VerificationResult};
@@ -257,42 +258,21 @@ fn load_schema_from_json(path: PathBuf) -> RichSchema {
 /// Reads all `.sql` files (sorted), concatenates them, parses the
 /// combined DDL, and extracts the rich schema.
 fn load_schema_from_dir(dir: PathBuf) -> RichSchema {
-    if !dir.exists() || !dir.is_dir() {
-        eprintln!(
-            "Error: schema directory '{}' not found or not a directory",
-            dir.display()
-        );
-        std::process::exit(1);
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| {
-            eprintln!("Error: cannot read directory '{}': {}", dir.display(), e);
+    let files = match collect_sql_files(&dir) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "Error: cannot scan schema directory '{}': {}",
+                dir.display(),
+                e
+            );
             std::process::exit(1);
-        })
-        .filter_map(|r| r.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext.eq_ignore_ascii_case("sql"))
-                .unwrap_or(false)
-        })
-        .collect();
-
-    entries.sort_by_key(|e| e.file_name());
-
-    if entries.is_empty() {
-        eprintln!(
-            "Error: no .sql files found in schema directory '{}'",
-            dir.display()
-        );
-        std::process::exit(1);
-    }
+        }
+    };
 
     let mut all_ddl = String::new();
-    for entry in &entries {
-        let path = entry.path();
-        let content = read_sql_file(&path);
+    for path in &files {
+        let content = read_sql_file(path);
         if content.is_empty() {
             eprintln!("Warning: empty content in '{}'", path.display());
         } else {
