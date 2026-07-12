@@ -539,9 +539,7 @@ mod tests {
         schema
             .tables
             .insert("schema_a.users".to_string(), info.clone());
-        schema
-            .tables
-            .insert("schema_b.users".to_string(), info);
+        schema.tables.insert("schema_b.users".to_string(), info);
         // Ambiguous — two schemas have the same bare name
         assert!(schema.find_table("users").is_none());
     }

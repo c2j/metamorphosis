@@ -56,9 +56,8 @@ pub fn collect_sql_files(dir: &Path) -> Result<Vec<PathBuf>, ExtractionError> {
 
     let mut files: Vec<PathBuf> = Vec::new();
     for entry in WalkDir::new(dir).sort_by_file_name() {
-        let entry = entry.map_err(|e| {
-            ExtractionError::WalkError(dir.display().to_string(), e.to_string())
-        })?;
+        let entry = entry
+            .map_err(|e| ExtractionError::WalkError(dir.display().to_string(), e.to_string()))?;
         if entry.file_type().is_file() {
             if let Some(ext) = entry.path().extension() {
                 if ext.eq_ignore_ascii_case("sql") {
