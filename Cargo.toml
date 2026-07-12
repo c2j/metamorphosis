@@ -8,4 +8,4 @@ rust-version = "1.75"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-ogsql-parser = { git = "https://github.com/c2j/ogsql-parser", tag = "v0.8.29" }
+ogsql-parser = { git = "https://github.com/c2j/ogsql-parser", tag = "v0.8.31" }
