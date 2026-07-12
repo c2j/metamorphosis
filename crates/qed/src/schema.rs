@@ -19,6 +19,41 @@ pub struct RichSchema {
     pub tables: HashMap<String, TableInfo>,
 }
 
+impl RichSchema {
+    /// Look up a table by name, supporting bare-name fallback for qualified entries.
+    ///
+    /// Resolution order:
+    /// 1. Exact (lowercased) match — O(1), returns immediately.
+    /// 2. If `name` contains no `.`, scan for keys ending with `.{lowered_name}`.
+    ///    Returns `None` if zero or multiple matches (safe failure on ambiguity).
+    pub fn find_table(&self, name: &str) -> Option<&TableInfo> {
+        let lower = name.to_lowercase();
+
+        // Step 1: exact match
+        if let Some(info) = self.tables.get(&lower) {
+            return Some(info);
+        }
+
+        // Step 2: if bare name (no dot), try suffix match
+        if !lower.contains('.') {
+            let dot_suffix = format!(".{lower}");
+            let mut matches: Vec<&TableInfo> = self
+                .tables
+                .iter()
+                .filter(|(k, _)| k.ends_with(&dot_suffix))
+                .map(|(_, v)| v)
+                .collect();
+
+            if matches.len() == 1 {
+                return Some(matches.remove(0));
+            }
+            // 0 matches or ambiguous (2+) — return None
+        }
+
+        None
+    }
+}
+
 /// Constraints attached to a single table.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct TableConstraints {
@@ -450,5 +485,77 @@ mod tests {
             t.columns[1].nullable,
             "non-PK column 'b' should remain nullable"
         );
+    }
+
+    // ── find_table tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn find_table_exact_match() {
+        let mut schema = RichSchema::default();
+        let info = TableInfo {
+            columns: vec![ColumnInfo {
+                name: "id".to_string(),
+                data_type: "INTEGER".to_string(),
+                nullable: false,
+                is_primary_key: true,
+                is_unique: true,
+            }],
+            constraints: TableConstraints::default(),
+        };
+        schema.tables.insert("users".to_string(), info.clone());
+        assert!(schema.find_table("users").is_some());
+        assert!(schema.find_table("USERS").is_some());
+    }
+
+    #[test]
+    fn find_table_bare_to_qualified() {
+        let mut schema = RichSchema::default();
+        let info = TableInfo {
+            columns: vec![ColumnInfo {
+                name: "id".to_string(),
+                data_type: "INTEGER".to_string(),
+                nullable: false,
+                is_primary_key: true,
+                is_unique: true,
+            }],
+            constraints: TableConstraints::default(),
+        };
+        schema
+            .tables
+            .insert("public.users".to_string(), info.clone());
+        // Bare name finds the qualified entry
+        assert!(schema.find_table("users").is_some());
+        // Simple name that doesn't exist as suffix
+        assert!(schema.find_table("nonexistent").is_none());
+    }
+
+    #[test]
+    fn find_table_ambiguous_returns_none() {
+        let mut schema = RichSchema::default();
+        let info = TableInfo {
+            columns: vec![],
+            constraints: TableConstraints::default(),
+        };
+        schema
+            .tables
+            .insert("schema_a.users".to_string(), info.clone());
+        schema
+            .tables
+            .insert("schema_b.users".to_string(), info);
+        // Ambiguous — two schemas have the same bare name
+        assert!(schema.find_table("users").is_none());
+    }
+
+    #[test]
+    fn find_table_qualified_not_found_returns_none() {
+        let mut schema = RichSchema::default();
+        let info = TableInfo {
+            columns: vec![],
+            constraints: TableConstraints::default(),
+        };
+        schema.tables.insert("public.users".to_string(), info);
+        // If the user provides a qualified name that doesn't exist exactly, no suffix fallback
+        // for dot-containing names
+        assert!(schema.find_table("other.users").is_none());
     }
 }

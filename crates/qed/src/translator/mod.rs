@@ -47,10 +47,8 @@ impl ColumnScope {
         alias: Option<&str>,
         schema: &RichSchema,
     ) -> Result<Self, TranslateError> {
-        let lower = table_name.to_lowercase();
         let info = schema
-            .tables
-            .get(&lower)
+            .find_table(table_name)
             .ok_or_else(|| TranslateError::TableNotFound(table_name.to_string()))?;
         let alias_key = alias.map(|a| a.to_lowercase());
         let columns = info
