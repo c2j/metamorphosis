@@ -107,6 +107,8 @@ cargo test --workspace
 ```
 
 > CI 的 clippy 带 `-D warnings`——本地漏掉 `-D warnings` 会出现「本地绿、CI 红」。
+>
+> ⚠️ **`qed-verify.yml` 是唯一的 CI，而且带 path 过滤**：只有 `crates/qed/**`、`crates/core/**`、`crates/rules/**`（push 时还含 `Cargo.toml` / `Cargo.lock`）变更才触发。改 `crates/cli`、`crates/mcp-server`、`crates/verieql`、`tests/regress` **不会触发任何 CI**——这些路径的门禁完全靠本地跑，必须在汇报里贴出实际命令与结果。
 
 > 库代码只用 `thiserror`（不用 `anyhow`）；`core` crate 零 IO 依赖；规则测试优先用 `#[rule_test]` DSL（若尚未实现则用普通单元测试，测试名描述行为）。
 
